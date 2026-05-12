@@ -1063,6 +1063,7 @@ function PagePresetConfig({
   bankLetterIndex, presetNumber, bankData, bankDisplayName, bankState, deviceState,
   usbState, onToggleUsb,
   connectionMode, onToggleConnectionMode,
+  onShowCertHelp,
   presetCount, onNextLetter, onSelectPreset, onDisplayNameChange,
   onRegisterPresetSave,
 }) {
@@ -1091,6 +1092,20 @@ function PagePresetConfig({
             <span className="bf-conn-mode-sub">
               {connectionMode === 'STA' ? 'bfmidi.local' : '192.168.4.1'}
             </span>
+          </button>
+
+          <button
+            type="button"
+            className="bf-conn-icon bf-conn-cert"
+            onClick={onShowCertHelp}
+            aria-label="Instalar certificado HTTPS"
+            title="Instalar certificado HTTPS (necessario no iPad/iPhone)"
+          >
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <rect x="5" y="10" width="14" height="10" rx="1.5" />
+              <path d="M8 10V7a4 4 0 0 1 8 0v3" />
+              <circle cx="12" cy="15" r="1.2" fill="currentColor" />
+            </svg>
           </button>
 
           <button
@@ -1682,11 +1697,97 @@ function ConnectionScreen({ onWifiConnect, onUsbToggle, usbState, error,
   );
 }
 
+// ─── Cert install modal (iOS / outros) ─────────────────────────────
+// O firmware so serve HTTPS (cert self-signed embutido). Pra Safari iOS
+// aceitar os fetches HTTPS->bfmidi.local sem mixed-content/cert-invalido,
+// o usuario precisa instalar o cert publico no SO. Hospedamos uma copia
+// publica do .crt aqui mesmo (webApp/bfmidi.crt) — assim funciona antes
+// de conectar no device. A chave privada NUNCA sai do firmware/certs/.
+function detectPlatform() {
+  if (typeof navigator === 'undefined') return 'unknown';
+  const ua = navigator.userAgent || '';
+  const isIOS = /iPad|iPhone|iPod/.test(ua) ||
+                (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  if (isIOS) return 'ios';
+  if (/Android/i.test(ua)) return 'android';
+  if (/Macintosh/i.test(ua)) return 'mac';
+  if (/Windows/i.test(ua)) return 'win';
+  return 'other';
+}
+
+function CertInstallModal({ open, onClose }) {
+  if (!open) return null;
+  const platform = detectPlatform();
+  const certHref = './bfmidi.crt';
+  const steps = {
+    ios: [
+      'Toque em "Baixar certificado" abaixo. Safari vai pedir para permitir o download de um perfil de configuracao — confirme.',
+      'Abra Ajustes → Geral → VPN e Gerenciamento de Dispositivos. Toque no perfil BFMIDI e em Instalar (pode pedir o codigo do iPad).',
+      'IMPORTANTE: Ajustes → Geral → Sobre → Ajustes de Confianca do Certificado. Ative o interruptor ao lado de "bfmidi.local". Sem isso o Safari continua bloqueando.',
+      'Volte ao app. Conecte o iPad na rede do BFMIDI (AP) ou na mesma rede WiFi do pedal (STA). O app deve conectar normalmente.',
+    ],
+    mac: [
+      'Clique em "Baixar certificado". O arquivo bfmidi.crt sera salvo.',
+      'Abra o arquivo — o Acesso a Chaveiros (Keychain) vai abrir. Adicione ao chaveiro "Sistema" (ou "Login").',
+      'Localize "bfmidi.local" no chaveiro, clique duas vezes, expanda "Confiar" e marque "Confiar Sempre" em SSL.',
+      'Pronto. Conecte o Mac na rede do pedal e o app vai funcionar.',
+    ],
+    android: [
+      'Clique em "Baixar certificado". O arquivo bfmidi.crt vai pra Downloads.',
+      'Ajustes → Seguranca → Criptografia e credenciais → Instalar um certificado → Certificado CA. Selecione o arquivo.',
+      'No Chrome novo (Android 12+), a maioria dos casos funciona sem instalar (Private Network Access). Tente primeiro sem instalar.',
+    ],
+    win: [
+      'Clique em "Baixar certificado". O arquivo bfmidi.crt sera salvo.',
+      'Clique duas vezes no .crt → "Instalar Certificado" → "Computador Local" → "Colocar todos os certificados no seguinte armazenamento" → procure "Autoridades de Certificacao Raiz Confiaveis".',
+      'Reabra o browser. No Chrome, tambem funciona via Private Network Access sem instalar.',
+    ],
+    other: [
+      'Clique em "Baixar certificado" e instale como autoridade de certificacao raiz confiavel no seu sistema operacional.',
+    ],
+  };
+  const platformLabel = {
+    ios: 'iPad / iPhone (Safari)',
+    mac: 'Mac (Safari / Chrome)',
+    android: 'Android',
+    win: 'Windows',
+    other: 'Seu dispositivo',
+  }[platform];
+  return (
+    <div className="bf-modal-backdrop" onClick={onClose} role="dialog" aria-modal="true">
+      <div className="bf-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="bf-modal-head">
+          <h2 className="bf-modal-title">INSTALAR CERTIFICADO</h2>
+          <button type="button" className="bf-modal-close" onClick={onClose} aria-label="Fechar">x</button>
+        </div>
+        <div className="bf-modal-body">
+          <p className="bf-modal-lead">
+            O pedal BFMIDI usa HTTPS com um certificado proprio. Pra o navegador
+            confiar nesse certificado e aceitar a conexao, instale-o uma vez no
+            seu dispositivo.
+          </p>
+          <p className="bf-modal-platform">Detectado: <strong>{platformLabel}</strong></p>
+          <ol className="bf-modal-steps">
+            {steps[platform].map((s, i) => <li key={i}>{s}</li>)}
+          </ol>
+          <div className="bf-modal-actions">
+            <a className="bf-btn-primary" href={certHref} download="bfmidi.crt">
+              Baixar certificado
+            </a>
+            <button type="button" className="bf-btn-secondary" onClick={onClose}>Fechar</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Root ───────────────────────────────────────────────────────────
 function App() {
   const [page, setPage] = useState('preset_config');
   const [saveState, setSaveState] = useState('idle');
   const [deviceState, setDeviceState] = useState('offline');
+  const [certModalOpen, setCertModalOpen] = useState(false);
   // USB transport (Web Serial API). Estados:
   //   'unsupported' (browser nao tem navigator.serial),
   //   'disconnected', 'connecting', 'connected', 'error'.
@@ -2139,6 +2240,7 @@ function App() {
             onSelectPreset={(n) => selectBank(bankLetterIndex, n)}
             connectionMode={connectionMode}
             onToggleConnectionMode={toggleConnectionMode}
+            onShowCertHelp={() => setCertModalOpen(true)}
             onDisplayNameChange={setBankDisplayName}
             onRegisterPresetSave={registerPresetSave}
           />
@@ -2178,6 +2280,7 @@ function App() {
             ? () => { const h = presetSaveRef.current; if (h && h.save) h.save(); }
             : saveGlobalConfig}
         />
+        <CertInstallModal open={certModalOpen} onClose={() => setCertModalOpen(false)} />
       </div>
     </div>
   );

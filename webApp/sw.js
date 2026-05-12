@@ -7,7 +7,7 @@
 //   - Nao intercepta cross-origin (chamadas pra device em outro host
 //     passam direto pra rede).
 
-const CACHE_NAME = 'bfmidi-editor-v4';
+const CACHE_NAME = 'bfmidi-editor-v5';
 const APP_SHELL = [
   './',
   './index.html',
@@ -25,6 +25,7 @@ const APP_SHELL = [
   './icons/app-192.png',
   './icons/app-512.png',
   './manifest.webmanifest',
+  './bfmidi.crt',
 ];
 
 self.addEventListener('install', (event) => {

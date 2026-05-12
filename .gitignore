@@ -48,7 +48,11 @@ webApp/uploads/
 
 # ── Credenciais persistidas no runtime (não devem entrar em git) ───────
 data/wifi_sta.txt
-# Certificado TLS + chave privada (gerados localmente, embutidos no firmware)
+# Certificado TLS + chave privada (gerados localmente, embutidos no firmware).
+# A pasta inteira fica fora pra proteger a chave privada (.key).
+# IMPORTANTE: a copia publica do cert vai pra webApp/bfmidi.crt pra distribuicao
+# via GitHub Pages (usuario instala no iPad/iPhone). Esse arquivo NAO esta
+# bloqueado e deve ser sincronizado com BFMIDI_CERT.h quando regerar o cert.
 certs/
 
 # ── Logs ───────────────────────────────────────────────────────────────
