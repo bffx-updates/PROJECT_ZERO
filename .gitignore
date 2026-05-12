@@ -1,3 +1,15 @@
+# ── Firmware ──────────────────────────────────────────────────────────
+# Este repo hospeda apenas o webApp (publicado via GitHub Pages).
+# Arquivos do firmware ficam locais — versionamento separado se um dia
+# quiser. Os padroes abaixo cobrem so a raiz, sem afetar webApp/.
+/*.h
+/*.ino
+/*.bat
+/*.csv
+/PROJECT_STRUCTURE.d
+/CLAUDE.md
+/data/
+
 # ── Build / IDE ────────────────────────────────────────────────────────
 *.o
 *.obj
