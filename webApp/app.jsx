@@ -211,8 +211,22 @@ function normalizeApiBase(value) {
 function isLocalPreviewHost(h) {
   return location.protocol === 'file:' || h === '' || h === 'localhost' || h === '127.0.0.1' || h === '::1';
 }
-const DEVICE_API = normalizeApiBase(URL_API) || (isLocalPreviewHost(location.hostname) ? DEFAULT_DEVICE_API : '');
+// Device API e mutavel: a tela de conexao pode trocar o IP em runtime,
+// e o resultado e persistido em localStorage pra autoreconexao no proximo
+// boot. Em .bat localhost ja vem com DEFAULT_DEVICE_API; em Pages HTTPS
+// comeca vazio e a tela de conexao guia o usuario.
+let DEVICE_API = normalizeApiBase(URL_API) ||
+                 (isLocalPreviewHost(location.hostname) ? DEFAULT_DEVICE_API : '') ||
+                 (typeof localStorage !== 'undefined' ? (localStorage.getItem('bfmidi_deviceApi') || '') : '');
 function apiUrl(path) { return DEVICE_API + path; }
+function setDeviceApi(url) {
+  DEVICE_API = normalizeApiBase(url);
+  try { localStorage.setItem('bfmidi_deviceApi', DEVICE_API); } catch {}
+}
+function clearDeviceApi() {
+  DEVICE_API = '';
+  try { localStorage.removeItem('bfmidi_deviceApi'); } catch {}
+}
 
 // Transport selector: o webApp pode falar com o firmware via HTTP (WiFi) ou
 // USB Serial (Web Serial API). Quando USB esta conectado, _transport.usbSend
@@ -1579,6 +1593,109 @@ function TabBar({ page, setPage, saveState, onSave }) {
   );
 }
 
+// ─── Tela de conexao (gate inicial) ─────────────────────────────────
+// Quando o webApp roda hospedado (Pages HTTPS), comeca sem device API
+// definido. Esta tela pergunta qual IP usar (AP do pedal, STA via mDNS,
+// ou manual) e/ou oferece USB Web Serial. Apos sucesso, esconde e o
+// editor segue normal.
+function ConnectionScreen({ onWifiConnect, onUsbToggle, usbState, error,
+                            attempting }) {
+  const [ip, setIp] = useState(localStorage.getItem('bfmidi_lastManualIp') || '');
+  const usbSupported = typeof navigator !== 'undefined' && 'serial' in navigator;
+
+  const submitManual = (e) => {
+    if (e) e.preventDefault();
+    if (!ip.trim()) return;
+    const clean = ip.trim().replace(/^https?:\/\//, '');
+    localStorage.setItem('bfmidi_lastManualIp', clean);
+    onWifiConnect('http://' + clean);
+  };
+
+  return (
+    <div className="phone-frame">
+      <div className="bf-screen">
+        <div className="bf-conn-shell">
+          <div className="bf-conn-logo">
+            <img src="icons/app-192.png" alt="BFMIDI" width="80" height="80" />
+            <h1>BFMIDI</h1>
+            <p>Editor de presets</p>
+          </div>
+
+          <div className="bf-conn-section">
+            <div className="bf-conn-section-title">CONECTAR VIA WIFI</div>
+            <button
+              type="button"
+              className="bf-conn-option"
+              disabled={attempting}
+              onClick={() => onWifiConnect('http://192.168.4.1')}
+            >
+              <span className="bf-conn-option-title">AP do pedal</span>
+              <span className="bf-conn-option-sub">BFMIDI_WIFI · 192.168.4.1</span>
+            </button>
+            <button
+              type="button"
+              className="bf-conn-option"
+              disabled={attempting}
+              onClick={() => onWifiConnect('http://bfmidi.local')}
+            >
+              <span className="bf-conn-option-title">Rede local (STA)</span>
+              <span className="bf-conn-option-sub">bfmidi.local · mesmo WiFi de casa</span>
+            </button>
+
+            <form className="bf-conn-manual" onSubmit={submitManual}>
+              <input
+                type="text"
+                className="bf-input"
+                placeholder="IP customizado (ex: 192.168.1.50)"
+                value={ip}
+                onChange={(e) => setIp(e.target.value)}
+                disabled={attempting}
+                spellCheck={false}
+                autoCapitalize="off"
+                autoCorrect="off"
+              />
+              <button
+                type="submit"
+                className="bf-conn-go"
+                disabled={attempting || !ip.trim()}
+              >
+                {attempting ? '…' : 'CONECTAR'}
+              </button>
+            </form>
+          </div>
+
+          {usbSupported && (
+            <div className="bf-conn-section">
+              <div className="bf-conn-section-title">OU VIA USB</div>
+              <button
+                type="button"
+                className="bf-conn-option"
+                disabled={attempting || usbState === 'connecting'}
+                onClick={onUsbToggle}
+              >
+                <span className="bf-conn-option-title">
+                  {usbState === 'connecting' ? 'Conectando…'
+                    : usbState === 'connected' ? 'USB conectado ✓'
+                    : 'Conectar via cabo USB'}
+                </span>
+                <span className="bf-conn-option-sub">
+                  PC com cabo no pedal · Web Serial
+                </span>
+              </button>
+            </div>
+          )}
+
+          {error && <div className="bf-conn-error">{error}</div>}
+
+          <div className="bf-conn-foot">
+            BFMIDI Project Zero
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Root ───────────────────────────────────────────────────────────
 function App() {
   const [page, setPage] = useState('preset_config');
@@ -1992,6 +2109,58 @@ function App() {
     }
   };
 
+  // ── Gate de conexao ──────────────────────────────────────────────────
+  // Se nao tem DEVICE_API definido (Pages HTTPS sem param) e USB nao
+  // esta conectado, mostra a tela inicial pedindo IP ou USB. Apos sucesso
+  // (pelo handler abaixo ou pelo toggleUsb) esconde e o editor segue.
+  const [showConnect, setShowConnect] = useState(!DEVICE_API);
+  const [connectError, setConnectError] = useState('');
+  const [connectAttempting, setConnectAttempting] = useState(false);
+
+  const tryWifiConnect = useCallback(async (url) => {
+    setConnectAttempting(true);
+    setConnectError('');
+    setDeviceApi(url);
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 5000);
+      const r = await fetch(apiUrl('/config/global'), { signal: ctrl.signal });
+      clearTimeout(t);
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      setDeviceState('online');
+      setShowConnect(false);
+    } catch (e) {
+      setConnectError(`Nao consegui falar com ${url}. Verifique se voce esta na rede certa.`);
+      clearDeviceApi();
+      setDeviceState('offline');
+    } finally {
+      setConnectAttempting(false);
+    }
+  }, []);
+
+  // Se USB conecta, fecha o gate tambem.
+  useEffect(() => {
+    if (usbState === 'connected') setShowConnect(false);
+  }, [usbState]);
+
+  // Se o usuario clica no icone WiFi vermelho do header, reabre o gate.
+  const handleOpenConnect = useCallback(() => {
+    setConnectError('');
+    setShowConnect(true);
+  }, []);
+
+  if (showConnect) {
+    return (
+      <ConnectionScreen
+        onWifiConnect={tryWifiConnect}
+        onUsbToggle={toggleUsb}
+        usbState={usbState}
+        error={connectError}
+        attempting={connectAttempting}
+      />
+    );
+  }
+
   return (
     <div className="phone-frame">
       <div className="bf-screen">
@@ -2008,7 +2177,7 @@ function App() {
             presetCount={presetCount}
             onNextLetter={nextBankLetter}
             onSelectPreset={(n) => selectBank(bankLetterIndex, n)}
-            onReload={reloadGlobalConfig}
+            onReload={handleOpenConnect}
             onDisplayNameChange={setBankDisplayName}
             onRegisterPresetSave={registerPresetSave}
           />

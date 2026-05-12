@@ -87,6 +87,131 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
 }
 .bf-header-preset .bf-title { margin: 0; }
 .bf-conn-icons { display: flex; gap: 10px; }
+
+/* ── Tela inicial de conexao ─────────────────────────────────────────── */
+.bf-conn-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  padding: 32px 22px;
+  min-height: 100%;
+  align-items: stretch;
+}
+.bf-conn-logo {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 0 4px;
+}
+.bf-conn-logo img {
+  border-radius: 18px;
+  box-shadow: 0 6px 22px rgba(0,0,0,0.55), 0 0 0 1px var(--hair);
+}
+.bf-conn-logo h1 {
+  font-family: var(--font-display);
+  font-size: 32px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  margin: 6px 0 0;
+}
+.bf-conn-logo p {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 0;
+}
+.bf-conn-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.bf-conn-section-title {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding-left: 4px;
+}
+.bf-conn-option {
+  appearance: none;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 14px 18px;
+  background: linear-gradient(180deg, #1a1a1e 0%, #131318 100%);
+  border: 1px solid var(--hair);
+  border-radius: 18px;
+  color: var(--text);
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+  transition: border-color 0.15s ease, box-shadow 0.2s ease, transform 0.1s ease;
+}
+.bf-conn-option:hover:not(:disabled) {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent-soft), 0 0 22px var(--accent-glow);
+}
+.bf-conn-option:active:not(:disabled) { transform: scale(0.99); }
+.bf-conn-option:disabled { opacity: 0.55; cursor: not-allowed; }
+.bf-conn-option-title {
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 600;
+}
+.bf-conn-option-sub {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.bf-conn-manual {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+}
+.bf-conn-manual .bf-input { height: 48px; }
+.bf-conn-go {
+  appearance: none;
+  border: 0;
+  background: var(--accent);
+  color: #07140a;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  padding: 0 18px;
+  border-radius: 14px;
+  cursor: pointer;
+  min-width: 100px;
+}
+.bf-conn-go:disabled { opacity: 0.45; cursor: not-allowed; }
+.bf-conn-error {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--danger, #ff6b6b);
+  background: rgba(255, 107, 107, 0.08);
+  border: 1px solid rgba(255, 107, 107, 0.35);
+  border-radius: 12px;
+  padding: 10px 14px;
+  text-align: center;
+}
+.bf-conn-foot {
+  margin-top: auto;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--faint);
+  text-align: center;
+  padding-top: 12px;
+}
 .bf-conn-icon {
   appearance: none;
   border: 1.5px solid #6c6c75;
