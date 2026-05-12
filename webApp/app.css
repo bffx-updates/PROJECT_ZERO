@@ -1,0 +1,1460 @@
+/* BFMIDI · iPhone redesign — modern iOS dark feel + brand orange */
+
+:root {
+  --bg: #0a0a0c;
+  --screen: #07070a;
+  --card: #141418;
+  --card-2: #1c1c20;
+  --card-3: #232328;
+  --hair: rgba(255,255,255,0.07);
+  --hair-strong: rgba(255,255,255,0.12);
+  --text: #f6f6f8;
+  --muted: rgba(235,235,245,0.6);
+  --faint: rgba(235,235,245,0.32);
+  --ghost: rgba(235,235,245,0.18);
+  --accent: #ff6a1f;
+  --accent-2: #ff8a3a;
+  --accent-soft: rgba(255,106,31,0.16);
+  --accent-glow: rgba(255,106,31,0.55);
+  --success: #30d158;
+  --danger: #ff453a;
+  --blue: #0a84ff;
+
+  --font-sys: -apple-system, "SF Pro Display", "SF Pro Text", "Inter Tight", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menasha, monospace;
+  --font-display: "Antonio", "SF Pro Display", system-ui, sans-serif;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background:
+    radial-gradient(1200px 700px at 20% -10%, #1a1a20 0%, transparent 60%),
+    radial-gradient(900px 600px at 110% 110%, #1a1216 0%, transparent 55%),
+    #0c0c10;
+  color: var(--text);
+  font-family: var(--font-sys);
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+}
+input.bf-input, select.bf-input {
+  font-family: var(--font-mono);
+  outline: none;
+}
+select.bf-input option { background: #141418; color: #f6f6f8; }
+
+/* ---- Screen body shell inside iPhone ---- */
+.bf-screen {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--screen);
+  color: var(--text);
+  font-family: var(--font-sys);
+  position: relative;
+  overflow: hidden;
+}
+
+.bf-screen::before {
+  content: "";
+  position: absolute; inset: 0;
+  background:
+    radial-gradient(80% 50% at 50% -10%, rgba(255,106,31,0.10) 0%, transparent 60%),
+    radial-gradient(60% 40% at 100% 100%, rgba(10,132,255,0.06) 0%, transparent 55%);
+  pointer-events: none;
+}
+
+.bf-content {
+  padding: 16px 16px 110px;
+  position: relative;
+  z-index: 1;
+}
+
+/* ---- Header ---- */
+.bf-header {
+  padding: 24px 4px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  position: relative;
+  z-index: 2;
+}
+.bf-header-preset {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  padding: 24px 4px 16px;
+}
+.bf-header-preset .bf-title { margin: 0; }
+.bf-conn-icons { display: flex; gap: 10px; }
+.bf-conn-icon {
+  appearance: none;
+  border: 1.5px solid #6c6c75;
+  background: transparent;
+  border-radius: 50%;
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  color: #9c9ca6;
+  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease, box-shadow 0.2s ease;
+}
+.bf-conn-icon:hover { border-color: #c6c6cf; color: #e6e6ee; }
+.bf-conn-icon.is-online {
+  color: var(--success);
+  border-color: var(--success);
+  box-shadow: 0 0 14px rgba(48, 209, 88, 0.45);
+}
+.bf-conn-icon.is-loading {
+  color: var(--text);
+  border-color: var(--hair-strong);
+  animation: bf-conn-pulse 1s ease-in-out infinite;
+}
+.bf-conn-icon.is-offline,
+.bf-conn-icon.is-error {
+  color: var(--danger, #ff6b6b);
+  border-color: var(--danger, #ff6b6b);
+}
+.bf-conn-icon.is-disconnected {
+  /* Estado padrao USB: muted, neutro */
+}
+.bf-conn-icon.is-connecting {
+  color: var(--text);
+  border-color: var(--hair-strong);
+  animation: bf-conn-pulse 1s ease-in-out infinite;
+}
+.bf-conn-icon.is-connected {
+  color: var(--success);
+  border-color: var(--success);
+  box-shadow: 0 0 14px rgba(48, 209, 88, 0.45);
+}
+.bf-conn-icon.is-unsupported {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+@keyframes bf-conn-pulse {
+  0%, 100% { opacity: 0.55; }
+  50%      { opacity: 1; }
+}
+.bf-eyebrow {
+  display: flex; align-items: center; gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+.bf-eyebrow .dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--success);
+  box-shadow: 0 0 8px var(--success);
+}
+.bf-eyebrow .dot.off { background: var(--faint); box-shadow: none; }
+.bf-eyebrow .pill {
+  margin-left: auto;
+  padding: 3px 8px;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  color: var(--accent);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+}
+.bf-title {
+  font-family: var(--font-sys);
+  font-size: 34px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.05;
+  margin: 6px 0 0;
+}
+.bf-title .accent { color: var(--accent); }
+.bf-subtitle {
+  color: var(--muted);
+  font-size: 14px;
+  margin-top: 4px;
+}
+
+/* ---- Card ---- */
+.bf-card {
+  background: var(--card);
+  border-radius: 22px;
+  padding: 18px;
+  border: 1px solid var(--hair);
+  position: relative;
+  overflow: hidden;
+}
+.bf-card + .bf-card { margin-top: 14px; }
+.bf-card-head {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 14px;
+}
+.bf-card-head h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.bf-card-head .meta {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--faint);
+  letter-spacing: 0.1em;
+}
+
+/* Section header (group label) */
+.bf-section-label {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding: 18px 6px 8px;
+  display: flex; align-items: center; gap: 8px;
+}
+.bf-section-label::before {
+  content: ""; width: 4px; height: 4px; border-radius: 50%;
+  background: var(--accent); box-shadow: 0 0 8px var(--accent-glow);
+}
+
+/* ---- Bank row: tile do bank (esq, span 2 linhas) + 6 presets (3x2) ----
+   A coluna 1 (bank) tem o dobro da largura das colunas de preset, entao a
+   tile do bank fica aproximadamente quadrada (largura 2X, altura 2X+gap). */
+.bf-bank-row {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr 1fr;
+  grid-auto-rows: 1fr;
+  gap: 10px;
+  margin: 8px 0 18px;
+}
+.bf-bank-tile {
+  grid-column: 1 / 2;
+  grid-row: 1 / span 2;
+  position: relative;
+  border-radius: 18px;
+  background:
+    radial-gradient(70% 70% at 50% 30%, rgba(255,106,31,0.18) 0%, transparent 70%),
+    linear-gradient(180deg, #1b1b20 0%, #131318 100%);
+  border: 1px solid var(--hair);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  font-family: var(--font-sys);
+  overflow: hidden;
+  transition: transform 0.15s ease, box-shadow 0.2s ease;
+}
+.bf-bank-tile .letter {
+  display: block;
+  font-weight: 700;
+  font-size: clamp(72px, 22vw, 150px);
+  line-height: 1;
+  color: var(--accent);
+  text-shadow: 0 0 40px var(--accent-glow), 0 0 80px rgba(255,106,31,0.25);
+  letter-spacing: -0.02em;
+  text-align: center;
+}
+.bf-bank-tile .bf-bank-name {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 10px;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bf-bank-tile .led {
+  position: absolute;
+  top: 10px; right: 10px;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent-glow);
+}
+.bf-bank-tile.is-loading .led {
+  background: var(--ghost);
+  box-shadow: none;
+}
+.bf-bank-tile.is-error .led {
+  background: #e54545;
+  box-shadow: 0 0 8px rgba(229,69,69,0.6);
+}
+
+.bf-preset {
+  position: relative;
+  aspect-ratio: 1;
+  border-radius: 14px;
+  background: linear-gradient(180deg, #1b1b20 0%, #131318 100%);
+  border: 1px solid var(--hair);
+  display: flex; flex-direction: column; justify-content: space-between;
+  padding: 8px 10px;
+  font-family: var(--font-display);
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.2s ease;
+}
+.bf-preset .num {
+  font-size: clamp(28px, 8vw, 48px);
+  font-weight: 700;
+  line-height: 1;
+  color: var(--text);
+  letter-spacing: -0.02em;
+  margin-top: 2px;
+}
+.bf-preset .label {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  color: var(--faint);
+  text-transform: uppercase;
+}
+.bf-preset .led {
+  position: absolute;
+  top: 8px; right: 8px;
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--ghost);
+}
+.bf-preset.is-active {
+  border-color: var(--accent);
+  background:
+    radial-gradient(120% 80% at 50% 0%, rgba(255,106,31,0.32) 0%, transparent 70%),
+    linear-gradient(180deg, #2a1a10 0%, #18120e 100%);
+  box-shadow: 0 0 0 1px var(--accent-glow), 0 12px 40px -8px var(--accent-glow);
+}
+.bf-preset.is-active .num { color: var(--accent); }
+.bf-preset.is-active .led { background: var(--accent); box-shadow: 0 0 8px var(--accent-glow); }
+
+/* ---- Bottom tab bar (fixed inside iPhone) ---- */
+.bf-tabbar {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  width: calc(100% - 24px);
+  max-width: 456px;
+  bottom: 16px;
+  z-index: 30;
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr auto;
+  gap: 6px;
+  padding: 8px;
+  border-radius: 28px;
+  background: rgba(20,20,24,0.78);
+  border: 1px solid var(--hair-strong);
+  backdrop-filter: blur(20px) saturate(140%);
+  -webkit-backdrop-filter: blur(20px) saturate(140%);
+}
+.bf-tab {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  height: 48px;
+  border-radius: 20px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  display: grid; place-items: center;
+  cursor: pointer;
+}
+.bf-tab.is-active {
+  background: var(--card-2);
+  color: var(--text);
+}
+.bf-tab.is-active.preset_config,
+.bf-tab.is-active.global_config,
+.bf-tab.is-active.system_config {
+  background: var(--accent);
+  color: #1a0e06;
+  box-shadow: 0 0 22px var(--accent-glow);
+}
+.bf-save {
+  appearance: none;
+  border: 0;
+  height: 48px;
+  min-width: 56px;
+  padding: 0 14px;
+  border-radius: 20px;
+  background: var(--text);
+  color: #0c0c10;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  display: grid; place-items: center;
+  cursor: pointer;
+}
+
+/* ---- Slider (brightness) ---- */
+.bf-slider {
+  position: relative;
+  height: 64px;
+  border-radius: 22px;
+  background: linear-gradient(180deg, #0e0e12 0%, #16161a 100%);
+  border: 1px solid var(--hair);
+  overflow: hidden;
+  margin-top: 10px;
+}
+.bf-slider-fill {
+  position: absolute;
+  top: 0; left: 0; bottom: 0;
+  background: linear-gradient(90deg, rgba(255,106,31,0.16), rgba(255,106,31,0.6));
+  border-right: 1px solid var(--accent);
+  box-shadow: 0 0 32px var(--accent-glow);
+}
+.bf-slider-label {
+  position: absolute;
+  top: 50%; transform: translateY(-50%);
+  left: 16px;
+  display: flex; align-items: baseline; gap: 6px;
+  z-index: 2;
+}
+.bf-slider-label .v {
+  font-family: var(--font-display);
+  font-size: 30px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+.bf-slider-label .u {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+  letter-spacing: 0.18em;
+}
+.bf-slider-ticks {
+  position: absolute;
+  inset: 0 16px;
+  display: flex; align-items: flex-end;
+  gap: 0;
+  pointer-events: none;
+}
+.bf-slider-ticks .t {
+  flex: 1;
+  height: 8px;
+  border-right: 1px solid var(--hair);
+}
+.bf-slider-ticks .t:nth-child(5n) { height: 14px; border-color: var(--hair-strong); }
+.bf-slider-ticks .t:last-child { border-right: 0; }
+
+/* LED preview strip */
+.bf-led-strip {
+  display: flex; gap: 8px;
+  margin-top: 14px;
+  padding: 14px;
+  background: var(--card-2);
+  border-radius: 16px;
+  align-items: center;
+}
+.bf-led-strip-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--muted);
+  letter-spacing: 0.18em;
+  margin-right: auto;
+}
+.bf-led-strip .led-dot {
+  width: 14px; height: 14px; border-radius: 50%;
+  background: var(--accent);
+}
+
+/* ---- Toggle / Switch (iOS-style) ---- */
+.bf-switch {
+  appearance: none;
+  width: 50px; height: 30px;
+  border-radius: 999px;
+  background: var(--card-3);
+  border: 0;
+  position: relative;
+  cursor: pointer;
+  transition: background 0.2s ease;
+  flex-shrink: 0;
+}
+.bf-switch::after {
+  content: "";
+  position: absolute;
+  top: 2px; left: 2px;
+  width: 26px; height: 26px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+  transition: transform 0.2s ease;
+}
+.bf-switch.is-on { background: var(--success); }
+.bf-switch.is-on.is-accent { background: var(--accent); box-shadow: 0 0 18px var(--accent-glow); }
+.bf-switch.is-on::after { transform: translateX(20px); }
+
+/* ---- Segmented control ---- */
+.bf-seg {
+  display: flex;
+  background: var(--card-2);
+  border-radius: 12px;
+  padding: 3px;
+  gap: 0;
+}
+.bf-seg button {
+  flex: 1;
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  height: 34px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  border-radius: 9px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.bf-seg button.is-active {
+  background: var(--accent);
+  color: #1a0e06;
+  box-shadow: 0 1px 6px rgba(0,0,0,0.4), 0 0 18px var(--accent-glow);
+}
+
+/* ---- Row (list) ---- */
+.bf-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 52px;
+  padding: 0 4px;
+  border-bottom: 1px solid var(--hair);
+}
+.bf-row:last-child { border-bottom: 0; }
+.bf-row .label {
+  flex: 1;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--text);
+}
+.bf-row .sub {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+  letter-spacing: 0.1em;
+}
+.bf-row .right {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--muted);
+  letter-spacing: 0.08em;
+}
+
+/* ---- Stepper / cycle button ---- */
+.bf-cycle {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.bf-cycle button {
+  appearance: none;
+  flex: 1;
+  border: 1px solid var(--hair);
+  background: var(--card-2);
+  color: var(--text);
+  height: 64px;
+  border-radius: 16px;
+  font-family: var(--font-display);
+  font-size: 32px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  cursor: pointer;
+}
+.bf-cycle button .cap {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  color: var(--faint);
+  margin-bottom: 2px;
+  text-transform: uppercase;
+}
+.bf-cycle button.is-on {
+  border-color: var(--accent);
+  color: var(--accent);
+  background:
+    radial-gradient(120% 100% at 50% 0%, rgba(255,106,31,0.18) 0%, transparent 70%),
+    var(--card-2);
+}
+
+/* ---- Bank letter chips ---- */
+.bf-letter-chips {
+  display: flex; gap: 8px; margin-top: 8px;
+}
+.bf-letter-chips button {
+  appearance: none;
+  flex: 1;
+  height: 48px;
+  border-radius: 14px;
+  border: 1px solid var(--hair);
+  background: var(--card-2);
+  color: var(--muted);
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.bf-letter-chips button.is-on {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: 0 0 18px -6px var(--accent-glow);
+}
+.bf-letter-chips button.is-off {
+  opacity: 0.4;
+  text-decoration: line-through;
+  text-decoration-color: var(--faint);
+}
+
+/* ---- Footswitch arc (LED preview) ---- */
+.bf-fsw {
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+}
+.bf-fsw-glyph {
+  position: relative;
+  width: 72px; height: 72px;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 50% 50%, #0a0a0e 30%, transparent 70%),
+    radial-gradient(circle at 30% 30%, #2a2a32, #0e0e12 70%);
+  display: grid; place-items: center;
+}
+.bf-fsw-arcs { width: 100%; height: 100%; overflow: visible; }
+.bf-fsw-arcs path {
+  fill: none;
+  stroke-width: 8;
+  stroke-linecap: round;
+  filter: drop-shadow(0 0 3px var(--led-c, var(--accent)));
+}
+.bf-fsw-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--muted);
+  letter-spacing: 0.18em;
+}
+.bf-fsw-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px 6px;
+  margin-top: 18px;
+}
+
+/* ---- Model picker ---- */
+.bf-model-tabs {
+  display: flex; gap: 6px; margin-bottom: 12px;
+}
+.bf-model-tabs button {
+  appearance: none;
+  flex: 1;
+  border: 1px solid var(--hair);
+  background: var(--card-2);
+  color: var(--muted);
+  height: 36px;
+  border-radius: 10px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  cursor: pointer;
+}
+.bf-model-tabs button.is-active {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.bf-model-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 14px 12px;
+  background: var(--card-2);
+  border: 1px solid transparent;
+  border-radius: 14px;
+  margin-bottom: 6px;
+  cursor: pointer;
+}
+.bf-model-row.is-active {
+  border-color: var(--accent);
+  background:
+    linear-gradient(180deg, rgba(255,106,31,0.10), rgba(255,106,31,0)) ,
+    var(--card-2);
+}
+.bf-model-radio {
+  width: 18px; height: 18px;
+  border-radius: 50%;
+  border: 1.5px solid var(--faint);
+  flex-shrink: 0;
+  position: relative;
+}
+.bf-model-row.is-active .bf-model-radio {
+  border-color: var(--accent);
+}
+.bf-model-row.is-active .bf-model-radio::after {
+  content: "";
+  position: absolute; inset: 3px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent-glow);
+}
+.bf-model-name {
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: 0.04em;
+}
+.bf-model-meta {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--muted);
+  letter-spacing: 0.1em;
+}
+
+/* ---- WiFi panel ---- */
+.bf-wifi-status {
+  display: flex; align-items: center; gap: 12px;
+  padding: 14px;
+  border-radius: 16px;
+  background: var(--card-2);
+  margin-bottom: 12px;
+}
+.bf-wifi-icon {
+  width: 38px; height: 38px;
+  border-radius: 12px;
+  display: grid; place-items: center;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.bf-wifi-icon.off { background: rgba(255,255,255,0.06); color: var(--faint); }
+.bf-wifi-status .ssid {
+  flex: 1; display: flex; flex-direction: column;
+}
+.bf-wifi-status .ssid b {
+  font-size: 15px; font-weight: 600; color: var(--text);
+}
+.bf-wifi-status .ssid span {
+  font-family: var(--font-mono);
+  font-size: 11px; color: var(--muted); letter-spacing: 0.08em;
+}
+
+.bf-input-stack { display: flex; flex-direction: column; gap: 4px; }
+.bf-input-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--muted);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  padding: 4px 4px 0;
+}
+.bf-input {
+  height: 48px;
+  border: 1px solid var(--hair);
+  background: var(--card-2);
+  border-radius: 14px;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 14px;
+  letter-spacing: 0.05em;
+  padding: 0 14px;
+  display: flex; align-items: center; gap: 8px;
+}
+.bf-input.is-focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.bf-input .placeholder { color: var(--faint); }
+.bf-input .value { color: var(--text); }
+.bf-input .chev {
+  margin-left: auto;
+  color: var(--faint);
+  font-size: 12px;
+}
+
+.bf-net-list { margin-top: 10px; display: flex; flex-direction: column; gap: 4px; }
+.bf-net {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px; border-radius: 12px;
+  background: var(--card-2);
+}
+.bf-net.is-active { border: 1px solid var(--accent); }
+.bf-net .name { flex: 1; font-size: 14px; font-weight: 500; }
+.bf-net .strength {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+  letter-spacing: 0.08em;
+}
+
+.bf-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
+.bf-btn {
+  appearance: none;
+  height: 48px;
+  border: 1px solid var(--hair);
+  background: var(--card-2);
+  color: var(--text);
+  border-radius: 14px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  cursor: pointer;
+}
+.bf-btn.primary {
+  background: var(--accent);
+  color: #1a0e06;
+  border-color: var(--accent);
+  box-shadow: 0 0 18px -4px var(--accent-glow);
+}
+
+/* ---- Stats grid ---- */
+.bf-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px;
+  background: var(--hair);
+  border-radius: 16px;
+  overflow: hidden;
+  margin-top: 12px;
+}
+.bf-stat {
+  background: var(--card-2);
+  padding: 12px 14px;
+  display: flex; flex-direction: column; gap: 4px;
+}
+.bf-stat .k {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--muted);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+.bf-stat .v {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: 0.04em;
+}
+.bf-stat .v.accent { color: var(--accent); }
+
+/* ---- Auto start cluster ---- */
+.bf-auto-row {
+  display: flex; align-items: center; gap: 12px; padding: 4px 4px;
+}
+.bf-auto-row .label {
+  flex: 1;
+  font-size: 15px; font-weight: 500;
+}
+
+/* ---- App container (fullscreen, responsive) ---- */
+.phone-frame {
+  width: 100%;
+  max-width: 480px;
+  min-height: 100vh;
+  margin: 0 auto;
+  position: relative;
+  background: var(--screen);
+  overflow: hidden;
+}
+.bf-screen { min-height: 100vh; }
+
+/* ---- Sub-section chips (BRILHO / PRESET LEDS, MODELO / WI-FI) ---- */
+.bf-chip {
+  appearance: none;
+  border: 1px solid var(--hair);
+  background: var(--card-2);
+  color: var(--muted);
+  padding: 8px 14px;
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.bf-chip.is-on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+  box-shadow: 0 0 12px -2px var(--accent-glow);
+}
+
+/* ---- Icon tabs (GLOBAL: MIDI / DISPLAY / LEDS / BANKS) ---- */
+.bf-icon-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-top: 14px;
+}
+.bf-icon-tab {
+  appearance: none;
+  border: 1px solid var(--hair);
+  background: var(--card-2);
+  color: var(--muted);
+  border-radius: 16px;
+  padding: 12px 6px 10px;
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.bf-icon-tab svg {
+  width: 26px; height: 26px;
+  stroke: currentColor;
+}
+.bf-icon-tab span {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+}
+.bf-icon-tab.is-on {
+  border-color: var(--accent);
+  color: var(--accent);
+  background:
+    radial-gradient(120% 100% at 50% 0%, rgba(255,106,31,0.18) 0%, transparent 70%),
+    var(--card-2);
+  box-shadow: 0 0 18px -4px var(--accent-glow);
+}
+
+/* ---- Color popover (centered on screen, iOS-style sheet) ---- */
+.bf-color-pop {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 80;
+  background: linear-gradient(180deg, #1c1c20 0%, #141418 100%);
+  border: 1px solid var(--hair-strong);
+  border-radius: 24px;
+  padding: 18px;
+  width: min(320px, calc(100vw - 32px));
+  box-shadow:
+    0 30px 80px rgba(0,0,0,0.7),
+    0 0 0 1px rgba(255,255,255,0.04) inset;
+  animation: bf-pop-in 0.18s ease;
+}
+@keyframes bf-pop-in {
+  from { opacity: 0; transform: translate(-50%, -50%) scale(0.94); }
+  to   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+.bf-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.25);
+  backdrop-filter: blur(6px) saturate(110%);
+  -webkit-backdrop-filter: blur(6px) saturate(110%);
+  z-index: 70;
+  animation: bf-fade-in 0.2s ease;
+}
+@keyframes bf-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.bf-color-pop-head {
+  display: flex; align-items: center; gap: 12px;
+  padding-bottom: 14px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid var(--hair);
+}
+.bf-color-pop-preview {
+  width: 40px; height: 40px;
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,0.12);
+  flex-shrink: 0;
+  background-image: radial-gradient(circle at 30% 25%, rgba(255,255,255,.45), transparent 60%);
+  background-blend-mode: overlay;
+}
+.bf-color-pop-info {
+  flex: 1; display: flex; flex-direction: column; gap: 2px;
+  min-width: 0;
+}
+.bf-color-pop-eyebrow {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.2em;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+.bf-color-pop-name {
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.01em;
+  line-height: 1.1;
+}
+.bf-color-pop-close {
+  appearance: none;
+  width: 32px; height: 32px;
+  border-radius: 50%;
+  border: 0;
+  background: var(--card-3);
+  color: var(--muted);
+  display: grid; place-items: center;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+.bf-color-pop-close:hover { background: var(--card-2); color: var(--text); }
+
+.bf-color-pop-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 10px;
+}
+.bf-swatch {
+  appearance: none;
+  aspect-ratio: 1;
+  border-radius: 12px;
+  border: 1.5px solid rgba(255,255,255,0.08);
+  background:
+    radial-gradient(circle at 30% 25%, rgba(255,255,255,.45), transparent 55%),
+    var(--sw);
+  cursor: pointer;
+  position: relative;
+  transition: transform 0.12s ease, border-color 0.12s ease;
+}
+.bf-swatch:hover { transform: scale(1.06); border-color: rgba(255,255,255,0.2); }
+.bf-swatch.is-active {
+  border-color: var(--accent);
+  box-shadow:
+    0 0 0 2px var(--accent-soft),
+    0 6px 16px -4px var(--sw);
+}
+.bf-swatch.is-active::after {
+  content: "";
+  position: absolute;
+  top: 4px; right: 4px;
+  width: 12px; height: 12px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid #1c1c20;
+}
+.bf-swatch.is-off {
+  background:
+    repeating-linear-gradient(45deg, #1a1a1a 0 5px, #28282c 5px 10px);
+  display: grid; place-items: center;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  color: rgba(255,255,255,0.75);
+  letter-spacing: 0.12em;
+}
+
+/* ---- Save button states ---- */
+.bf-save.is-saved {
+  background: var(--success);
+  color: #07140a;
+}
+
+/* ---- Preset editor card (BANK page) ---- */
+.bf-form-row {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+.bf-form-row:first-child { margin-top: 0; }
+.bf-form-row-3 { grid-template-columns: 2fr 1fr 1fr; }
+.bf-form-row-2 { grid-template-columns: 1fr 1fr; }
+.bf-form-row-colors { grid-template-columns: 1fr 1fr 1fr; }
+.bf-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.bf-field-grow { min-width: 0; }
+.bf-field-spacer { visibility: hidden; }
+.bf-field-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding-left: 2px;
+}
+.bf-input-name {
+  color: var(--accent);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+.bf-input-name:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.bf-select-wrap {
+  position: relative;
+  display: flex;
+}
+.bf-select {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  padding-right: 36px;
+  cursor: pointer;
+}
+.bf-select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.bf-select-chev {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+  color: var(--faint);
+  font-size: 12px;
+}
+.bf-color-bar {
+  appearance: none;
+  border: 1px solid var(--hair);
+  border-radius: 10px;
+  height: 32px;
+  width: 100%;
+  cursor: pointer;
+  padding: 0;
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,0.4), inset 0 8px 18px rgba(0,0,0,0.5);
+  transition: border-color 0.15s ease, box-shadow 0.2s ease, transform 0.15s ease;
+}
+.bf-color-bar:hover { border-color: var(--hair-strong); }
+.bf-color-bar:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft), inset 0 0 0 1px rgba(0,0,0,0.4), inset 0 8px 18px rgba(0,0,0,0.5);
+}
+
+@media (max-width: 520px) {
+  .bf-form-row-3 { grid-template-columns: 1fr 1fr; }
+  .bf-field-spacer { display: none; }
+}
+
+.bf-input-num {
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  justify-content: center;
+  -moz-appearance: textfield;
+}
+
+/* Grid 3x3 para escolher alinhamento do nome do preset */
+.bf-align-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(3, 1fr);
+  gap: 3px;
+  height: 48px;
+  border: 1px solid var(--hair);
+  background: var(--card-2);
+  border-radius: 14px;
+  padding: 4px;
+}
+.bf-align-cell {
+  appearance: none;
+  background: var(--card-3);
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.12s ease, transform 0.1s ease;
+}
+.bf-align-cell:hover { background: var(--hair-strong); }
+.bf-align-cell.is-active {
+  background: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent-soft);
+}
+
+/* ---- Preset editor card (tabs MIDI / DISPLAY) ---- */
+.bf-preset-card {
+  margin-top: 18px;
+  background: linear-gradient(180deg, #1a1a1e 0%, #131318 100%);
+  border: 1px solid var(--hair);
+  border-radius: 22px;
+  padding: 20px 22px 22px;
+}
+.bf-preset-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 16px;
+  margin-bottom: 18px;
+  border-bottom: 1px solid var(--hair);
+}
+.bf-preset-card-title {
+  font-family: var(--font-display);
+  font-size: 30px;
+  font-weight: 800;
+  line-height: 0.95;
+  letter-spacing: -0.02em;
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.bf-preset-tabs {
+  display: flex;
+  gap: 10px;
+}
+.bf-preset-tab {
+  appearance: none;
+  border: 1.5px solid var(--hair);
+  background: transparent;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  padding: 10px 14px 8px;
+  border-radius: 14px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-width: 90px;
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+.bf-tab-ico { width: 44px; height: 44px; display: block; }
+.bf-tab-shape { fill: none; stroke: currentColor; stroke-width: 1.8; }
+.bf-tab-dot   { fill: currentColor; }
+.bf-tab-line  { fill: none; stroke: currentColor; stroke-width: 1.8; }
+.bf-preset-tab:hover { border-color: var(--hair-strong); }
+.bf-preset-tab.is-active {
+  border-color: var(--accent);
+  color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent-soft);
+}
+.bf-preset-tab.is-active .bf-tab-shape { fill: var(--accent); stroke: var(--accent); }
+.bf-preset-tab.is-active .bf-tab-dot   { fill: #fff; }
+.bf-preset-card-body {
+  /* Sem fundo proprio — o card ja e o container visual. */
+  min-height: 220px;
+}
+
+/* Botoes Tamanho/Negrito no DISPLAY tab batem a altura dos color bars (32px). */
+.bf-grid-tamanho .bf-input,
+.bf-grid-negrito .bf-input {
+  height: 32px;
+  border-radius: 10px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+/* Layout do DISPLAY tab em grid 4 colunas x 3 linhas:
+   Row 1: TAMANHO(1) NEGRITO(1) NAMECOLOR(2 wide)
+   Row 2: NAMECOLOR(1) BACKGROUND(1) ALINHAMENTO(2x2 spanning rows 2-3)
+   Row 3: TAGCOLOR(1) BACKLAYERS(1) (alignment continues) */
+.bf-display-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr 1fr;
+  grid-auto-rows: auto;
+  column-gap: 12px;
+  row-gap: 14px;
+}
+.bf-grid-tamanho       { grid-column: 1; grid-row: 1; }
+.bf-grid-negrito       { grid-column: 2; grid-row: 1; }
+.bf-grid-namecolor-top { grid-column: 3 / 5; grid-row: 1; }
+.bf-grid-namecolor     { grid-column: 1; grid-row: 2; }
+.bf-grid-background    { grid-column: 2; grid-row: 2; }
+.bf-grid-alinhamento   { grid-column: 3 / 5; grid-row: 2 / 4; }
+.bf-grid-tagcolor      { grid-column: 1; grid-row: 3; }
+.bf-grid-backlayers    { grid-column: 2; grid-row: 3; }
+
+/* Alignment grid maior quando ocupa o canto 2x2 — sem aspect-ratio fixo
+   pra nao esticar verticalmente; deixa o grid container ditar a altura. */
+.bf-align-grid-large {
+  height: 100%;
+  max-height: 160px;
+  gap: 6px;
+  padding: 6px;
+  border-radius: 16px;
+}
+/* Permite que o label estenda 100% para o grid preencher o cell */
+.bf-grid-alinhamento { display: flex; flex-direction: column; }
+.bf-grid-alinhamento > .bf-align-grid-large { flex: 1; }
+
+@media (max-width: 520px) {
+  .bf-display-grid { grid-template-columns: 1fr 1fr; }
+  .bf-grid-tamanho       { grid-column: 1; grid-row: 1; }
+  .bf-grid-negrito       { grid-column: 2; grid-row: 1; }
+  .bf-grid-namecolor-top { grid-column: 1 / 3; grid-row: 2; }
+  .bf-grid-namecolor     { grid-column: 1; grid-row: 3; }
+  .bf-grid-background    { grid-column: 2; grid-row: 3; }
+  .bf-grid-alinhamento   { grid-column: 1 / 3; grid-row: 4; }
+  .bf-grid-tagcolor      { grid-column: 1; grid-row: 5; }
+  .bf-grid-backlayers    { grid-column: 2; grid-row: 5; }
+}
+
+/* MIDI tab: nome grande centralizado, sem caixa de input */
+.bf-preset-name-wrap {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 14px 0 24px;
+}
+.bf-preset-name-input {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  outline: none;
+  color: var(--accent);
+  font-family: var(--font-display);
+  font-size: 52px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  text-align: center;
+  width: 100%;
+  max-width: 100%;
+  padding: 0 8px;
+  line-height: 1.05;
+}
+
+/* Aba EXTRAS: 4 PCs + 2 CCs */
+.bf-extras-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+.bf-extras-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.bf-extras-section-title {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding-left: 2px;
+}
+.bf-extras-row {
+  display: grid;
+  grid-template-columns: 56px 1fr 1fr;
+  gap: 12px;
+  align-items: end;
+}
+.bf-extras-row-cc { grid-template-columns: 56px 1fr 1fr 1fr; }
+.bf-extras-index {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  border: 0;
+  background: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-display);
+  font-size: 26px;
+  font-weight: 700;
+  color: #0a0a0c;
+  align-self: end;
+}
+.bf-extras-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+.bf-extras-cell .bf-input { border-radius: 12px; }
+.bf-extras-cell .bf-select[disabled] { opacity: 0.4; cursor: not-allowed; }
+
+/* Linha divisoria entre o nome do preset e os campos MIDI */
+.bf-preset-divider {
+  border: 0;
+  border-top: 1px solid var(--hair);
+  margin: 8px -10px 20px;
+}
+
+.bf-preset-name-input::placeholder {
+  color: var(--muted);
+  opacity: 0.6;
+}
+.bf-preset-name-input:focus { outline: none; }
+
+@media (max-width: 520px) {
+  .bf-preset-card-title { font-size: 22px; }
+  .bf-preset-tab { min-width: 72px; padding: 8px 10px 6px; gap: 2px; }
+  .bf-tab-ico { width: 32px; height: 32px; }
+  .bf-preset-name-input { font-size: 36px; }
+}
+.bf-input-num::-webkit-outer-spin-button,
+.bf-input-num::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.bf-select.is-mute {
+  color: var(--danger);
+  letter-spacing: 0.18em;
+  font-weight: 700;
+}
+
+.bf-hint {
+  margin: 14px 2px 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--faint);
+}
+.bf-hint b {
+  color: var(--accent);
+  font-weight: 600;
+}
+.bf-hint-status {
+  margin-left: 2px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+}
+.bf-hint-status.is-loading,
+.bf-hint-status.is-saving { color: var(--muted); }
+.bf-hint-status.is-saved { color: var(--success); }
+.bf-hint-status.is-error { color: var(--danger); }
+
+/* Popover da paleta do display: usa o mesmo container/sheet do LED picker
+   (.bf-color-pop), reaproveita .bf-color-pop-grid e .bf-swatch, e adiciona
+   secoes roláveis (Transparencia / Solid / G1 / G2 / Custom / Misc). */
+.bf-palette-pop {
+  width: min(340px, calc(100vw - 32px));
+  max-height: min(86vh, 720px);
+  display: flex;
+  flex-direction: column;
+}
+.bf-palette-pop .bf-color-pop-head { margin-bottom: 10px; padding-bottom: 12px; }
+.bf-palette-scroll {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  overflow-y: auto;
+  padding-right: 6px;
+  margin-right: -6px;
+  min-height: 0;
+  flex: 1;
+}
+.bf-palette-scroll::-webkit-scrollbar { width: 6px; }
+.bf-palette-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.08);
+  border-radius: 3px;
+}
+.bf-palette-scroll::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.16); }
+.bf-palette-pop .bf-color-pop-grid { grid-template-columns: repeat(4, 1fr); }
+.bf-palette-section { display: flex; flex-direction: column; gap: 8px; }
+.bf-palette-section-title {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding-left: 2px;
+}

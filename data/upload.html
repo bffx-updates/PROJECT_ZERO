@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>BFMIDI - Upload</title>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <main class="upload-page">
+    <section class="upload-panel">
+      <h1>UPLOAD FILES</h1>
+      <form id="uploadForm">
+        <label>
+          Destino no LittleFS
+          <input id="pathInput" name="path" value="/index.html" autocomplete="off">
+        </label>
+        <label>
+          Arquivo
+          <input id="fileInput" name="file" type="file" required>
+        </label>
+        <button type="submit">UPLOAD</button>
+      </form>
+      <p id="uploadStatus"></p>
+    </section>
+  </main>
+  <nav class="footer">
+    <a href="/bank">BANK</a>
+    <a href="/global">GLOBAL</a>
+    <a href="/system">SYSTEM</a>
+    <button onclick="saveConfig(this)">SAVE</button>
+  </nav>
+  <script src="/app.js"></script>
+</body>
+</html>

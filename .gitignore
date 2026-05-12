@@ -1,0 +1,41 @@
+# ── Build / IDE ────────────────────────────────────────────────────────
+*.o
+*.obj
+*.bin
+*.elf
+*.hex
+*.map
+build/
+.build/
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ── Sistema ────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+ehthumbs.db
+
+# ── Python / webApp local server ───────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+
+# ── Sessão local de IA / settings de máquina ───────────────────────────
+.claude/
+*.local.json
+
+# ── Lixo do projeto antigo / backups ───────────────────────────────────
+Nova pasta/
+webApp/backup-before-news-*/
+webApp/uploads/
+*.bak
+
+# ── Credenciais persistidas no runtime (não devem entrar em git) ───────
+data/wifi_sta.txt
+
+# ── Logs ───────────────────────────────────────────────────────────────
+*.log
