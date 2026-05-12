@@ -1706,10 +1706,12 @@ function App() {
   // ── Modo de conexao WiFi (AP vs STA) ─────────────────────────────────
   // Toggle no header alterna entre 2 hosts fixos. Cada modo aponta o
   // DEVICE_API pro IP correspondente; pingHttp valida automaticamente.
-  //   AP  -> http://192.168.4.1   (conectado direto no AP do pedal)
-  //   STA -> http://bfmidi.local  (mesmo WiFi de casa via mDNS)
-  const AP_HOST = 'http://192.168.4.1';
-  const STA_HOST = 'http://bfmidi.local';
+  //   AP  -> https://192.168.4.1   (conectado direto no AP do pedal)
+  //   STA -> https://bfmidi.local  (mesmo WiFi de casa via mDNS)
+  // O firmware agora serve apenas HTTPS (TLS auto-assinado). Primeira
+  // visita pede aceitar o cert — depois fica salvo no browser.
+  const AP_HOST = 'https://192.168.4.1';
+  const STA_HOST = 'https://bfmidi.local';
   const [connectionMode, setConnectionMode] = useState(() => {
     const saved = (typeof localStorage !== 'undefined' &&
                    localStorage.getItem('bfmidi_connectionMode')) || 'AP';

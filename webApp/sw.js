@@ -7,7 +7,7 @@
 //   - Nao intercepta cross-origin (chamadas pra device em outro host
 //     passam direto pra rede).
 
-const CACHE_NAME = 'bfmidi-editor-v3';
+const CACHE_NAME = 'bfmidi-editor-v4';
 const APP_SHELL = [
   './',
   './index.html',

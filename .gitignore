@@ -48,6 +48,8 @@ webApp/uploads/
 
 # ── Credenciais persistidas no runtime (não devem entrar em git) ───────
 data/wifi_sta.txt
+# Certificado TLS + chave privada (gerados localmente, embutidos no firmware)
+certs/
 
 # ── Logs ───────────────────────────────────────────────────────────────
 *.log
