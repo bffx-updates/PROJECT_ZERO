@@ -1062,7 +1062,8 @@ function PresetEditorCard({ tag, onDisplayNameChange, onRegisterSave }) {
 function PagePresetConfig({
   bankLetterIndex, presetNumber, bankData, bankDisplayName, bankState, deviceState,
   usbState, onToggleUsb,
-  presetCount, onNextLetter, onSelectPreset, onReload, onDisplayNameChange,
+  connectionMode, onToggleConnectionMode,
+  presetCount, onNextLetter, onSelectPreset, onDisplayNameChange,
   onRegisterPresetSave,
 }) {
   const letters = ['A', 'B', 'C', 'D', 'E'];
@@ -1076,35 +1077,20 @@ function PagePresetConfig({
         <div className="bf-conn-icons">
           <button
             type="button"
-            className={'bf-conn-icon is-' + deviceState}
-            onClick={() => deviceState !== 'online' && deviceState !== 'loading' && onReload && onReload()}
-            aria-label={
-              deviceState === 'online' ? 'WiFi conectado'
-              : deviceState === 'loading' ? 'WiFi conectando'
-              : 'WiFi offline — tocar para reconectar'
-            }
+            className={'bf-conn-mode is-' + deviceState + ' is-mode-' + (connectionMode || 'AP').toLowerCase()}
+            onClick={onToggleConnectionMode}
+            aria-label={`Modo de conexao WiFi: ${connectionMode}. Toque para alternar.`}
             title={
-              deviceState === 'online' ? 'WiFi ONLINE'
-              : deviceState === 'loading' ? 'WiFi CONECTANDO'
-              : 'WiFi OFFLINE — tocar para reconectar'
+              `Modo ${connectionMode} — ` +
+              (deviceState === 'online' ? 'CONECTADO'
+                : deviceState === 'loading' ? 'CONECTANDO'
+                : 'OFFLINE — toque pra trocar pra ' + (connectionMode === 'AP' ? 'STA' : 'AP'))
             }
           >
-            {deviceState === 'online' ? (
-              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M2 8.5C5 5.5 8.5 4 12 4s7 1.5 10 4.5" />
-                <path d="M5 12c2-2 4.5-3 7-3s5 1 7 3" />
-                <path d="M8.5 15.5c1-1 2.3-1.5 3.5-1.5s2.5 .5 3.5 1.5" />
-                <circle cx="12" cy="19" r="1.2" fill="currentColor" />
-              </svg>
-            ) : (
-              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M2 8.5C5 5.5 8.5 4 12 4s7 1.5 10 4.5" />
-                <path d="M5 12c2-2 4.5-3 7-3s5 1 7 3" />
-                <path d="M8.5 15.5c1-1 2.3-1.5 3.5-1.5s2.5 .5 3.5 1.5" />
-                <circle cx="12" cy="19" r="1.2" fill="currentColor" />
-                <path d="M3 3l18 18" stroke="currentColor" strokeWidth="2" />
-              </svg>
-            )}
+            <span className="bf-conn-mode-label">{connectionMode || 'AP'}</span>
+            <span className="bf-conn-mode-sub">
+              {connectionMode === 'STA' ? 'bfmidi.local' : '192.168.4.1'}
+            </span>
           </button>
 
           <button
@@ -1717,6 +1703,29 @@ function App() {
   // uma linha '<' chega. Permite request/response request-style sobre stream.
   const usbPendingRef = useRef([]);
 
+  // ── Modo de conexao WiFi (AP vs STA) ─────────────────────────────────
+  // Toggle no header alterna entre 2 hosts fixos. Cada modo aponta o
+  // DEVICE_API pro IP correspondente; pingHttp valida automaticamente.
+  //   AP  -> http://192.168.4.1   (conectado direto no AP do pedal)
+  //   STA -> http://bfmidi.local  (mesmo WiFi de casa via mDNS)
+  const AP_HOST = 'http://192.168.4.1';
+  const STA_HOST = 'http://bfmidi.local';
+  const [connectionMode, setConnectionMode] = useState(() => {
+    const saved = (typeof localStorage !== 'undefined' &&
+                   localStorage.getItem('bfmidi_connectionMode')) || 'AP';
+    return saved === 'STA' ? 'STA' : 'AP';
+  });
+  const toggleConnectionMode = useCallback(() => {
+    setConnectionMode((m) => (m === 'AP' ? 'STA' : 'AP'));
+  }, []);
+  // Aplica DEVICE_API ao mudar o modo (efeito sem pingHttp aqui;
+  // o useEffect do pingHttp ja depende de connectionMode mais abaixo).
+  useEffect(() => {
+    const host = connectionMode === 'STA' ? STA_HOST : AP_HOST;
+    setDeviceApi(host);
+    try { localStorage.setItem('bfmidi_connectionMode', connectionMode); } catch {}
+  }, [connectionMode]);
+
   const usbDisconnect = useCallback(async () => {
     try {
       if (usbReaderRef.current) {
@@ -1903,12 +1912,12 @@ function App() {
     return false;
   }, []);
 
-  // Re-ping ao trocar estado de USB e periodicamente a cada 30s.
+  // Re-ping ao trocar estado de USB, modo AP/STA, e periodicamente a 30s.
   useEffect(() => {
     pingHttp();
     const id = setInterval(pingHttp, 30000);
     return () => clearInterval(id);
-  }, [pingHttp, usbState]);
+  }, [pingHttp, usbState, connectionMode]);
 
   // ── Carregar config global ──
   const loadGlobalConfig = useCallback(async (timeoutMs = 4000) => {
@@ -1953,7 +1962,7 @@ function App() {
     }
     tryLoad();
     return () => { cancelled = true; };
-  }, [loadGlobalConfig, usbState]);
+  }, [loadGlobalConfig, usbState, connectionMode]);
 
   // Recarregar config manualmente (clicando no status do header).
   const reloadGlobalConfig = useCallback(async () => {
@@ -2109,57 +2118,6 @@ function App() {
     }
   };
 
-  // ── Gate de conexao ──────────────────────────────────────────────────
-  // Se nao tem DEVICE_API definido (Pages HTTPS sem param) e USB nao
-  // esta conectado, mostra a tela inicial pedindo IP ou USB. Apos sucesso
-  // (pelo handler abaixo ou pelo toggleUsb) esconde e o editor segue.
-  const [showConnect, setShowConnect] = useState(!DEVICE_API);
-  const [connectError, setConnectError] = useState('');
-  const [connectAttempting, setConnectAttempting] = useState(false);
-
-  const tryWifiConnect = useCallback(async (url) => {
-    setConnectAttempting(true);
-    setConnectError('');
-    setDeviceApi(url);
-    try {
-      const ctrl = new AbortController();
-      const t = setTimeout(() => ctrl.abort(), 5000);
-      const r = await fetch(apiUrl('/config/global'), { signal: ctrl.signal });
-      clearTimeout(t);
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      setDeviceState('online');
-      setShowConnect(false);
-    } catch (e) {
-      setConnectError(`Nao consegui falar com ${url}. Verifique se voce esta na rede certa.`);
-      clearDeviceApi();
-      setDeviceState('offline');
-    } finally {
-      setConnectAttempting(false);
-    }
-  }, []);
-
-  // Se USB conecta, fecha o gate tambem.
-  useEffect(() => {
-    if (usbState === 'connected') setShowConnect(false);
-  }, [usbState]);
-
-  // Se o usuario clica no icone WiFi vermelho do header, reabre o gate.
-  const handleOpenConnect = useCallback(() => {
-    setConnectError('');
-    setShowConnect(true);
-  }, []);
-
-  if (showConnect) {
-    return (
-      <ConnectionScreen
-        onWifiConnect={tryWifiConnect}
-        onUsbToggle={toggleUsb}
-        usbState={usbState}
-        error={connectError}
-        attempting={connectAttempting}
-      />
-    );
-  }
 
   return (
     <div className="phone-frame">
@@ -2177,7 +2135,8 @@ function App() {
             presetCount={presetCount}
             onNextLetter={nextBankLetter}
             onSelectPreset={(n) => selectBank(bankLetterIndex, n)}
-            onReload={handleOpenConnect}
+            connectionMode={connectionMode}
+            onToggleConnectionMode={toggleConnectionMode}
             onDisplayNameChange={setBankDisplayName}
             onRegisterPresetSave={registerPresetSave}
           />

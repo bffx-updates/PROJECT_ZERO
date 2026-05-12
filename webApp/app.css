@@ -86,7 +86,54 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
   padding: 24px 4px 16px;
 }
 .bf-header-preset .bf-title { margin: 0; }
-.bf-conn-icons { display: flex; gap: 10px; }
+.bf-conn-icons { display: flex; gap: 10px; align-items: center; }
+
+/* Toggle AP/STA: pill rectangular com label grande + IP pequeno */
+.bf-conn-mode {
+  appearance: none;
+  border: 1.5px solid #6c6c75;
+  background: transparent;
+  border-radius: 14px;
+  padding: 6px 12px;
+  height: 44px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  cursor: pointer;
+  color: #9c9ca6;
+  font-family: var(--font-mono);
+  transition: color 0.15s ease, border-color 0.15s ease, box-shadow 0.2s ease;
+  min-width: 96px;
+}
+.bf-conn-mode:hover { border-color: #c6c6cf; color: #e6e6ee; }
+.bf-conn-mode.is-online {
+  color: var(--success);
+  border-color: var(--success);
+  box-shadow: 0 0 14px rgba(48, 209, 88, 0.45);
+}
+.bf-conn-mode.is-loading {
+  color: var(--text);
+  border-color: var(--hair-strong);
+  animation: bf-conn-pulse 1s ease-in-out infinite;
+}
+.bf-conn-mode.is-offline {
+  color: var(--danger, #ff6b6b);
+  border-color: var(--danger, #ff6b6b);
+}
+.bf-conn-mode-label {
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  line-height: 1;
+}
+.bf-conn-mode-sub {
+  font-size: 8px;
+  letter-spacing: 0.08em;
+  opacity: 0.7;
+  line-height: 1.1;
+}
 
 /* ── Tela inicial de conexao ─────────────────────────────────────────── */
 .bf-conn-shell {
