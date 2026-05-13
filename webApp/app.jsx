@@ -1512,6 +1512,112 @@ function PageGlobalConfig({
   );
 }
 
+// ─── BACKUP / RESTORE ──────────────────────────────────────────────
+// Backup: GET /backup → JSON com presets MODIFICADOS apenas.
+// Restore: POST /restore com mesmo JSON; aplica como MERGE (presets
+// ausentes ficam intactos). Sem persistir NVS — apenas LittleFS de
+// bank_memory.txt, que é o escopo do backup.
+function BackupRestoreCard() {
+  const [status, setStatus] = useState({ kind: 'idle', msg: '' });
+
+  const doBackup = useCallback(async () => {
+    setStatus({ kind: 'loading', msg: 'Gerando backup...' });
+    try {
+      // apiCall roteia HTTP ou USB conforme transporte ativo. Em ambos
+      // retorna o JSON parseado — re-stringifica para download.
+      const json = await apiCall('GET', '/backup');
+      const text = JSON.stringify(json);
+      const blob = new Blob([text], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      const dateStr = new Date().toISOString().slice(0, 10);
+      a.download = `bfmidi-backup-${dateStr}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(a.href);
+      const count = json.presets ? Object.keys(json.presets).length : 0;
+      setStatus({ kind: 'ok', msg: `Backup OK · ${count} preset(s) modificado(s)` });
+    } catch (e) {
+      setStatus({ kind: 'error', msg: 'Falha: ' + e.message });
+    }
+  }, []);
+
+  const doRestore = useCallback(() => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'application/json,.json';
+    input.onchange = async (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (!file) return;
+      setStatus({ kind: 'loading', msg: 'Aplicando restore...' });
+      try {
+        const text = await file.text();
+        // Valida estrutura antes de enviar pro device
+        const parsed = JSON.parse(text);
+        if (!parsed.presets || typeof parsed.presets !== 'object') {
+          throw new Error('arquivo invalido (sem campo presets)');
+        }
+        // Limite USB: linha de comando max 2048 chars. Backups maiores
+        // exigem WiFi (HTTP).
+        if (_transport.usbConnected && text.length > 1900) {
+          throw new Error('arquivo muito grande pro USB (use WiFi)');
+        }
+        const result = await apiCall('POST', '/restore', text);
+        setStatus({ kind: 'ok', msg: `Restore OK · ${result.applied} preset(s) aplicado(s)` });
+      } catch (err) {
+        setStatus({ kind: 'error', msg: 'Falha: ' + err.message });
+      }
+    };
+    input.click();
+  }, []);
+
+  return (
+    <div className="bf-card">
+      <div className="bf-card-head">
+        <h3>BACKUP & RESTORE</h3>
+      </div>
+      <p style={{ fontSize: 13, color: 'var(--muted)', margin: '4px 4px 14px', lineHeight: 1.5 }}>
+        Exporta apenas os presets modificados como arquivo JSON. O restore é
+        em modo merge — presets ausentes do arquivo ficam intactos.
+      </p>
+      <div style={{ display: 'flex', gap: 10, marginTop: 8 }}>
+        <button
+          className="bf-action"
+          onClick={doBackup}
+          disabled={status.kind === 'loading'}
+          style={{ flex: 1 }}
+        >
+          FAZER BACKUP
+        </button>
+        <button
+          className="bf-action"
+          onClick={doRestore}
+          disabled={status.kind === 'loading'}
+          style={{ flex: 1 }}
+        >
+          RESTAURAR
+        </button>
+      </div>
+      {status.kind !== 'idle' && (
+        <p
+          style={{
+            marginTop: 12,
+            fontFamily: 'var(--font-mono)',
+            fontSize: 11,
+            letterSpacing: '0.08em',
+            color: status.kind === 'error' ? 'var(--danger, #ff6b6b)'
+                : status.kind === 'ok'    ? 'var(--success, #30d158)'
+                : 'var(--muted)',
+          }}
+        >
+          {status.msg}
+        </p>
+      )}
+    </div>
+  );
+}
+
 // ─── SYSTEM ─────────────────────────────────────────────────────────
 function PageSystemConfig({
   model, setModel,
@@ -1562,6 +1668,17 @@ function PageSystemConfig({
               <circle className="bf-tab-dot" cx="12" cy="21" r="1.5" />
             </svg>
             <span>WI‑FI</span>
+          </button>
+          <button className={'bf-icon-tab' + (section === 'backup' ? ' is-on' : '')} onClick={() => setSection('backup')}>
+            <svg viewBox="0 0 24 24" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              {/* Disquete classico (save/backup): corpo + slot superior +
+                  janela do slot + label inferior */}
+              <rect className="bf-tab-shape" x="3" y="3" width="18" height="18" rx="2" />
+              <rect className="bf-tab-dot" x="6" y="3" width="12" height="6.5" />
+              <rect className="bf-tab-shape" x="14" y="4.5" width="2" height="3.5" />
+              <rect className="bf-tab-shape" x="6.5" y="13" width="11" height="6" />
+            </svg>
+            <span>BACKUP</span>
           </button>
         </div>
 
@@ -1707,6 +1824,10 @@ function PageSystemConfig({
             })}
           </div>
         </>
+      )}
+
+      {section === 'backup' && (
+        <BackupRestoreCard />
       )}
     </div>
   );
