@@ -97,15 +97,21 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
   padding: 6px 12px;
   height: 44px;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
   justify-content: center;
-  gap: 1px;
+  gap: 6px;
   cursor: pointer;
   color: #9c9ca6;
   font-family: var(--font-mono);
   transition: color 0.15s ease, border-color 0.15s ease, box-shadow 0.2s ease;
   min-width: 96px;
+}
+.bf-conn-mode-ico {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  display: block;
 }
 .bf-conn-mode:hover { border-color: #c6c6cf; color: #e6e6ee; }
 .bf-conn-mode.is-online {
@@ -122,11 +128,32 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
   color: var(--danger, #ff6b6b);
   border-color: var(--danger, #ff6b6b);
 }
+/* Estados USB (mesma classe agora — botao USB usa `.bf-conn-mode`) */
+.bf-conn-mode.is-connected {
+  color: var(--success);
+  border-color: var(--success);
+  box-shadow: 0 0 14px rgba(48, 209, 88, 0.45);
+}
+.bf-conn-mode.is-connecting {
+  color: var(--text);
+  border-color: var(--hair-strong);
+  animation: bf-conn-pulse 1s ease-in-out infinite;
+}
+.bf-conn-mode.is-disconnected,
+.bf-conn-mode.is-error {
+  color: var(--danger, #ff6b6b);
+  border-color: var(--danger, #ff6b6b);
+}
+.bf-conn-mode.is-unsupported {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
 .bf-conn-mode-label {
-  font-size: 14px;
+  font-size: 12px;
   font-weight: 800;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.1em;
   line-height: 1;
+  white-space: nowrap;
 }
 .bf-conn-mode-sub {
   font-size: 8px;
@@ -408,9 +435,9 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
   position: relative;
   border-radius: 18px;
   background:
-    radial-gradient(120% 80% at 50% 0%, rgba(255,106,31,0.32) 0%, transparent 70%),
+    radial-gradient(120% 80% at 50% 0%, color-mix(in srgb, var(--tile-color, var(--accent)) 32%, transparent) 0%, transparent 70%),
     linear-gradient(180deg, #2a1a10 0%, #18120e 100%);
-  border: 1px solid var(--accent);
+  border: 1px solid var(--tile-color, var(--accent));
   display: flex;
   align-items: center;
   justify-content: center;
@@ -426,7 +453,9 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
   font-size: clamp(72px, 22vw, 150px);
   line-height: 1;
   color: #fff;
-  text-shadow: 0 0 40px var(--accent-glow), 0 0 80px rgba(255,106,31,0.25);
+  text-shadow:
+    0 0 40px color-mix(in srgb, var(--tile-color, var(--accent)) 55%, transparent),
+    0 0 80px color-mix(in srgb, var(--tile-color, var(--accent)) 25%, transparent);
   letter-spacing: -0.02em;
   text-align: center;
 }
@@ -450,8 +479,8 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
   top: 10px; right: 10px;
   width: 8px; height: 8px;
   border-radius: 50%;
-  background: var(--accent);
-  box-shadow: 0 0 8px var(--accent-glow);
+  background: var(--tile-color, var(--accent));
+  box-shadow: 0 0 8px color-mix(in srgb, var(--tile-color, var(--accent)) 55%, transparent);
 }
 .bf-bank-tile.is-loading .led {
   background: var(--ghost);
@@ -497,13 +526,15 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
   background: var(--ghost);
 }
 .bf-preset.is-active {
-  border-color: var(--accent);
+  border-color: var(--tile-color, var(--accent));
   background:
-    radial-gradient(120% 80% at 50% 0%, rgba(255,106,31,0.32) 0%, transparent 70%),
+    radial-gradient(120% 80% at 50% 0%, color-mix(in srgb, var(--tile-color, var(--accent)) 32%, transparent) 0%, transparent 70%),
     linear-gradient(180deg, #2a1a10 0%, #18120e 100%);
 }
-.bf-preset.is-active .num { color: var(--accent); }
-.bf-preset.is-active .led { background: var(--accent); box-shadow: 0 0 8px var(--accent-glow); }
+.bf-preset.is-active .led {
+  background: var(--tile-color, var(--accent));
+  box-shadow: 0 0 8px color-mix(in srgb, var(--tile-color, var(--accent)) 55%, transparent);
+}
 
 /* ---- Bottom tab bar (fixed inside iPhone) ---- */
 .bf-tabbar {
@@ -566,47 +597,66 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
   cursor: pointer;
 }
 
-/* ---- Slider (brightness) ---- */
+/* ---- Brightness: bola com % a esquerda + trilho a direita ---- */
+.bf-brightness {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 10px;
+}
+.bf-brightness-circle {
+  width: 68px;
+  height: 68px;
+  border-radius: 50%;
+  border: 2px solid var(--hair-strong);
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  line-height: 1;
+}
+.bf-brightness-circle .v {
+  font-family: var(--font-display);
+  font-size: 32px;
+  font-weight: 700;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  /* numerais display tem cap-height alta — em grid place-items: center
+     o glyph fica deslocado pra baixo do meio visual; -2px sobe pra ficar
+     opticamente centrado no circulo. */
+  margin-top: -2px;
+  text-align: center;
+}
+.bf-brightness-unit {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--muted);
+  letter-spacing: 0.08em;
+  margin-right: 4px;
+  flex-shrink: 0;
+}
+
 .bf-slider {
   position: relative;
+  flex: 1;
   height: 64px;
-  border-radius: 22px;
+  border-radius: 18px;
   background: linear-gradient(180deg, #0e0e12 0%, #16161a 100%);
   border: 1px solid var(--hair);
   overflow: hidden;
-  margin-top: 10px;
+  min-width: 0;
 }
 .bf-slider-fill {
   position: absolute;
   top: 0; left: 0; bottom: 0;
-  background: linear-gradient(90deg, rgba(255,106,31,0.16), rgba(255,106,31,0.6));
+  background: linear-gradient(90deg, rgba(255,106,31,0.20), rgba(255,106,31,0.7));
   border-right: 1px solid var(--accent);
   box-shadow: 0 0 32px var(--accent-glow);
 }
-.bf-slider-label {
-  position: absolute;
-  top: 50%; transform: translateY(-50%);
-  left: 16px;
-  display: flex; align-items: baseline; gap: 6px;
-  z-index: 2;
-}
-.bf-slider-label .v {
-  font-family: var(--font-display);
-  font-size: 30px;
-  font-weight: 700;
-  color: var(--text);
-  letter-spacing: -0.02em;
-  font-variant-numeric: tabular-nums;
-}
-.bf-slider-label .u {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--muted);
-  letter-spacing: 0.18em;
-}
 .bf-slider-ticks {
   position: absolute;
-  inset: 0 16px;
+  inset: 0 12px;
   display: flex; align-items: flex-end;
   gap: 0;
   pointer-events: none;
@@ -826,36 +876,71 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
 
 /* ---- Model picker ---- */
 .bf-model-tabs {
-  display: flex; gap: 6px; margin-bottom: 12px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-bottom: 14px;
 }
 .bf-model-tabs button {
   appearance: none;
-  flex: 1;
+  aspect-ratio: 1;
   border: 1px solid var(--hair);
-  background: var(--card-2);
-  color: var(--muted);
-  height: 36px;
-  border-radius: 10px;
+  background: linear-gradient(180deg, #1b1b20 0%, #131318 100%);
+  color: var(--text);
+  border-radius: 14px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  cursor: pointer;
+  box-shadow: 0 0 8px rgba(0,0,0,0.55), 0 0 18px rgba(0,0,0,0.65);
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.bf-model-tabs button .num {
+  font-family: var(--font-display);
+  font-size: clamp(28px, 8vw, 48px);
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+.bf-model-tabs button .label {
   font-family: var(--font-mono);
   font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.12em;
-  cursor: pointer;
+  letter-spacing: 0.16em;
+  color: var(--faint);
+  text-transform: uppercase;
 }
 .bf-model-tabs button.is-active {
   border-color: var(--accent);
-  color: var(--accent);
-  background: var(--accent-soft);
+  background:
+    radial-gradient(120% 80% at 50% 0%, rgba(255,106,31,0.32) 0%, transparent 70%),
+    linear-gradient(180deg, #2a1a10 0%, #18120e 100%);
 }
 
+.bf-model-list {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
 .bf-model-row {
-  display: flex; align-items: center; gap: 12px;
-  padding: 14px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px 12px;
   background: var(--card-2);
   border: 1px solid transparent;
-  border-radius: 14px;
-  margin-bottom: 6px;
+  border-radius: 12px;
   cursor: pointer;
+  min-width: 0;
+  position: relative;
+}
+.bf-model-row .bf-model-radio {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
 }
 .bf-model-row.is-active {
   border-color: var(--accent);
@@ -881,12 +966,17 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
   box-shadow: 0 0 8px var(--accent-glow);
 }
 .bf-model-name {
-  flex: 1;
   font-family: var(--font-mono);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--text);
-  letter-spacing: 0.04em;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: center;
+  padding: 0 22px;  /* evita sobrepor o radio quando o nome eh longo */
+  max-width: 100%;
 }
 .bf-model-meta {
   font-family: var(--font-mono);
@@ -988,6 +1078,13 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
 }
 .bf-action:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
 .bf-action:disabled { opacity: 0.45; cursor: not-allowed; }
+.bf-action.is-running {
+  border-color: var(--accent);
+  color: var(--accent);
+  background:
+    radial-gradient(120% 80% at 50% 0%, rgba(255,106,31,0.32) 0%, transparent 70%),
+    linear-gradient(180deg, #2a1a10 0%, #18120e 100%);
+}
 .bf-btn {
   appearance: none;
   height: 48px;
@@ -1095,10 +1192,20 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
   margin: 8px 0 18px;
 }
 .bf-icon-tabs.cols-3 {
-  /* Usado em SYSTEM (MODELO / WI-FI / BACKUP). Tamanho fixo de 84px por
-     coluna pra que os tabs nao estiquem e fiquem proximos do tamanho
-     dos preset buttons. */
   grid-template-columns: repeat(3, 84px);
+}
+.bf-icon-tabs.cols-4 {
+  /* Usado em SYSTEM (MODELO / WI-FI / BACKUP / HARD TEST). 4 colunas
+     que distribuem todo o espaco disponivel do card — botoes maiores,
+     ocupando a largura toda em vez de ficar fixos em 84px. */
+  grid-template-columns: repeat(4, 1fr);
+}
+.bf-icon-tabs.cols-4 .bf-icon-tab svg {
+  width: 38px;
+  height: 38px;
+}
+.bf-icon-tabs.cols-4 .bf-icon-tab span {
+  font-size: 11px;
 }
 .bf-icon-tab {
   appearance: none;
@@ -1259,11 +1366,21 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
   letter-spacing: 0.12em;
 }
 
-/* ---- Save button states ---- */
-.bf-save.is-saved {
-  background: var(--success);
-  color: #07140a;
-}
+/* ---- Save button states ----
+   O botao SAVE colore conforme o estado do preset ativo (substitui o
+   antigo .bf-status-badge que ficava no header do card).
+     idle   = sem mudancas — cor neutra (branco)
+     dirty  = mudancas pendentes — vermelho
+     saving = enviando agora — laranja (accent)
+     saved  = sucesso — verde
+     error  = falhou — vermelho
+*/
+.bf-save { transition: background 0.15s ease, color 0.15s ease, box-shadow 0.2s ease; }
+.bf-save.is-idle   { background: var(--text);    color: #0c0c10; }
+.bf-save.is-dirty  { background: var(--danger);  color: #fff;    box-shadow: 0 0 14px rgba(255,69,58,0.45); }
+.bf-save.is-saving { background: var(--accent);  color: #1a0e06; box-shadow: 0 0 14px var(--accent-glow); }
+.bf-save.is-saved  { background: var(--success); color: #07140a; box-shadow: 0 0 14px rgba(48,209,88,0.45); }
+.bf-save.is-error  { background: var(--danger);  color: #fff;    box-shadow: 0 0 14px rgba(255,69,58,0.6); }
 
 /* ---- Preset editor card (BANK page) ---- */
 .bf-form-row {
@@ -1459,7 +1576,7 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
 }
 .bf-preset-tabs {
   display: flex;
-  gap: 6px;
+  gap: 8px;
   flex-wrap: nowrap;
   flex: 1 1 auto;
   min-width: 0;
@@ -1481,13 +1598,15 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  flex: 0 1 84px;
+  gap: 8px;
+  /* Distribui os 4 tabs por todo o head — botoes maiores pra acomodar
+     icones maiores. */
+  flex: 1 1 0;
   min-width: 0;
   box-shadow: 0 0 8px rgba(0,0,0,0.55), 0 0 18px rgba(0,0,0,0.65);
   transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
 }
-.bf-tab-ico { width: 30px; height: 30px; display: block; flex: 0 0 auto; }
+.bf-tab-ico { width: 38px; height: 38px; display: block; flex: 0 0 auto; }
 .bf-tab-shape { fill: none; stroke: currentColor; stroke-width: 1.8; }
 .bf-tab-dot   { fill: currentColor; }
 .bf-tab-line  { fill: none; stroke: currentColor; stroke-width: 1.8; }
@@ -1618,12 +1737,30 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
   .bf-grid-backlayers    { grid-column: 2; grid-row: 5; }
 }
 
-/* MIDI tab: nome grande centralizado, sem caixa de input */
+/* MIDI tab: nome grande centralizado dentro de um campo editavel.
+   A MOLDURA fica no wrapper (background + border + radius) e usa flex
+   pra centralizar verticalmente o glyph. O <input> fica "nu" — soh com
+   o texto e height auto, conta com o flex pra alinhar no centro. */
 .bf-preset-name-wrap {
   display: flex;
   justify-content: center;
   align-items: center;
-  padding: 14px 0 24px;
+  margin: 6px 0 10px;
+  padding: 14px 14px;
+  background: rgba(255,255,255,0.03);
+  border: 1px dashed var(--hair-strong);
+  border-radius: 14px;
+  cursor: text;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.bf-preset-name-wrap:hover {
+  border-color: var(--accent-soft);
+  background: rgba(255,106,31,0.04);
+}
+.bf-preset-name-wrap:focus-within {
+  border-style: solid;
+  border-color: var(--accent);
+  background: rgba(255,106,31,0.06);
 }
 .bf-preset-name-input {
   appearance: none;
@@ -1638,8 +1775,11 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
   text-align: center;
   width: 100%;
   max-width: 100%;
-  padding: 0 8px;
-  line-height: 1.05;
+  padding: 0;
+  /* line-height: 1 encolhe o line box pro tamanho da fonte e elimina
+     o "descender vazio" que descentraliza glyphs all-caps. */
+  line-height: 1;
+  cursor: text;
 }
 
 /* Aba EXTRAS: 4 PCs + 2 CCs */
@@ -1696,14 +1836,13 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
 .bf-preset-divider {
   border: 0;
   border-top: 1px solid var(--hair);
-  margin: 8px -10px 20px;
+  margin: 6px -10px 12px;
 }
 
 .bf-preset-name-input::placeholder {
   color: var(--muted);
   opacity: 0.6;
 }
-.bf-preset-name-input:focus { outline: none; }
 
 @media (max-width: 520px) {
   .bf-preset-card-title { font-size: 22px; }

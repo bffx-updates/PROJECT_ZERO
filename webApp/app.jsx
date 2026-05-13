@@ -367,19 +367,22 @@ function BrightnessSlider({ value, onChange }) {
   }, [drag, update]);
 
   return (
-    <div
-      ref={ref}
-      className={'bf-slider' + (drag ? ' is-dragging' : '')}
-      onMouseDown={(e) => { e.preventDefault(); setDrag(true); update(e.clientX); }}
-      onTouchStart={(e) => { setDrag(true); update(e.touches[0].clientX); }}
-      style={{ cursor: 'ew-resize', touchAction: 'none' }}
-    >
-      <div className="bf-slider-fill" style={{ width: `${value}%` }} />
-      <div className="bf-slider-label">
-        <span className="v">{value}</span><span className="u">%</span>
+    <div className="bf-brightness">
+      <div className="bf-brightness-circle">
+        <span className="v">{value}</span>
       </div>
-      <div className="bf-slider-ticks">
-        {Array.from({ length: 21 }).map((_, i) => <span key={i} className="t" />)}
+      <span className="bf-brightness-unit">%</span>
+      <div
+        ref={ref}
+        className={'bf-slider' + (drag ? ' is-dragging' : '')}
+        onMouseDown={(e) => { e.preventDefault(); setDrag(true); update(e.clientX); }}
+        onTouchStart={(e) => { setDrag(true); update(e.touches[0].clientX); }}
+        style={{ cursor: 'ew-resize', touchAction: 'none' }}
+      >
+        <div className="bf-slider-fill" style={{ width: `${value}%` }} />
+        <div className="bf-slider-ticks">
+          {Array.from({ length: 21 }).map((_, i) => <span key={i} className="t" />)}
+        </div>
       </div>
     </div>
   );
@@ -762,19 +765,6 @@ function PresetEditorCard({ tag, onDisplayNameChange, onRegisterSave }) {
   return (
     <div className="bf-preset-card">
       <div className="bf-preset-card-head">
-        <div
-          className={'bf-status-badge is-' + (status === 'saving' ? 'saving' : status === 'error' ? 'error' : isDirty ? 'dirty' : 'ok')}
-          title={
-            status === 'saving' ? 'Salvando...'
-            : status === 'error' ? 'Erro ao salvar'
-            : isDirty ? 'Mudancas nao salvas — clique em SAVE'
-            : 'Tudo salvo'
-          }
-          aria-label="Status de salvamento do preset"
-        >
-          <span className="bf-status-dot" aria-hidden="true"></span>
-          <span className="bf-status-label">STATUS</span>
-        </div>
         <div className="bf-preset-tabs" role="tablist" aria-label="Modo de edicao do preset">
           <button
             type="button"
@@ -898,7 +888,7 @@ function PresetEditorCard({ tag, onDisplayNameChange, onRegisterSave }) {
                     onChange={(e) => update({ channel: Number(e.target.value) })}
                     aria-label="Canal MIDI"
                   >
-                    <option value={0}>MUTE</option>
+                    <option value={0}>OFF</option>
                     {Array.from({ length: 16 }, (_, i) => i + 1).map((n) => (
                       <option key={n} value={n}>{n}</option>
                     ))}
@@ -1174,18 +1164,25 @@ function PageHeader({
           onClick={onToggleConnectionMode}
           aria-label={`Modo de conexao WiFi: ${connectionMode}. Toque para alternar.`}
           title={
-            `Modo ${connectionMode} — ` +
+            `WiFi ${connectionMode} — ` +
             (deviceState === 'online' ? 'CONECTADO'
               : deviceState === 'loading' ? 'CONECTANDO'
               : 'OFFLINE — toque pra trocar pra ' + (connectionMode === 'AP' ? 'STA' : 'AP'))
           }
         >
-          <span className="bf-conn-mode-label">{connectionMode || 'AP'}</span>
+          <svg viewBox="0 0 24 24" className="bf-conn-mode-ico" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            {/* Ondas WiFi concentricas + ponto na base */}
+            <path d="M2 8.5 Q12 0 22 8.5" />
+            <path d="M5 13 Q12 6 19 13" />
+            <path d="M8.5 17.5 Q12 14 15.5 17.5" />
+            <circle cx="12" cy="21" r="1.4" fill="currentColor" />
+          </svg>
+          <span className="bf-conn-mode-label">WIFI · {connectionMode || 'AP'}</span>
         </button>
 
         <button
           type="button"
-          className={'bf-conn-icon is-' + usbState}
+          className={'bf-conn-mode is-' + usbState}
           onClick={onToggleUsb}
           disabled={usbState === 'unsupported'}
           aria-label={
@@ -1202,8 +1199,8 @@ function PageHeader({
             : 'USB OFFLINE — clique para conectar'
           }
         >
-          {/* Icone USB tradicional: trident apontando pra cima. */}
-          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <svg viewBox="0 0 24 24" className="bf-conn-mode-ico" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            {/* USB trident */}
             <path d="M12 2L8.5 6.5H15.5Z" fill="currentColor" stroke="none" />
             <path d="M12 6.5V20.5" />
             <path d="M12 13H7V17" />
@@ -1212,6 +1209,7 @@ function PageHeader({
             <circle cx="17" cy="15.2" r="1.5" fill="currentColor" stroke="none" />
             <circle cx="12" cy="21" r="1.8" fill="currentColor" stroke="none" />
           </svg>
+          <span className="bf-conn-mode-label">USB</span>
         </button>
       </div>
     </div>
@@ -1224,11 +1222,30 @@ function PagePresetConfig({
   connectionMode, onToggleConnectionMode,
   presetCount, onNextLetter, onSelectPreset, onDisplayNameChange,
   onRegisterPresetSave,
+  ledColorMode, letterLedColors, switchLedColors,
 }) {
   const letters = ['A', 'B', 'C', 'D', 'E'];
   const tag = `${letters[bankLetterIndex]}${presetNumber}`;
   const presets = Array.from({ length: presetCount }, (_, i) => i + 1);
   const tileName = (bankDisplayName && bankDisplayName.trim()) || tag;
+
+  // Cor dinamica do bank-tile e dos preset buttons.
+  //   modo POR LETRA  : bank-tile e preset ativo usam a cor da letra atual
+  //   modo POR SWITCH : bank-tile espelha a cor do SWITCH ATIVO (mesma do
+  //                     preset selecionado); cada preset n usa a cor do
+  //                     seu proprio switch.
+  const safeColor = (idx, fallback = '#ff7a1a') =>
+    (LED_COLORS[idx] && LED_COLORS[idx].hex) || fallback;
+  const letterIdx = (letterLedColors && letterLedColors[bankLetterIndex]) ?? 7;
+  const presetColorFor = (n) => {
+    if (ledColorMode === 'numeros' && switchLedColors) {
+      const swIdx = switchLedColors[n - 1];
+      return safeColor(swIdx, safeColor(letterIdx));
+    }
+    return safeColor(letterIdx);
+  };
+  const bankColor = presetColorFor(presetNumber);
+
   return (
     <div className="bf-content" key="bank">
       <PageHeader
@@ -1244,6 +1261,7 @@ function PagePresetConfig({
         <button
           type="button"
           className={'bf-bank-tile' + (bankState === 'loading' ? ' is-loading' : bankState === 'error' ? ' is-error' : '')}
+          style={{ '--tile-color': bankColor }}
           onClick={onNextLetter}
           aria-label={`Bank ${letters[bankLetterIndex]} (${tag}) — toque para alternar`}
           title={`${tag} · ${bankState === 'loading' ? 'LOADING' : bankState === 'error' ? 'ERROR' : 'LOADED'}`}
@@ -1252,13 +1270,23 @@ function PagePresetConfig({
           <span className="letter">{letters[bankLetterIndex]}</span>
           <span className="bf-bank-name" title={tileName}>{tileName}</span>
         </button>
-        {presets.map((n) => (
-          <button key={n} type="button" className={'bf-preset' + (n === presetNumber ? ' is-active' : '')} onClick={() => onSelectPreset(n)}>
-            <span className="led" />
-            <span className="num">{n}</span>
-            <span className="label">PRESET</span>
-          </button>
-        ))}
+        {presets.map((n) => {
+          const isActive = n === presetNumber;
+          const styleProp = isActive ? { '--tile-color': presetColorFor(n) } : undefined;
+          return (
+            <button
+              key={n}
+              type="button"
+              className={'bf-preset' + (isActive ? ' is-active' : '')}
+              style={styleProp}
+              onClick={() => onSelectPreset(n)}
+            >
+              <span className="led" />
+              <span className="num">{n}</span>
+              <span className="label">PRESET</span>
+            </button>
+          );
+        })}
       </div>
 
       <PresetEditorCard tag={tag} onDisplayNameChange={onDisplayNameChange} onRegisterSave={onRegisterPresetSave} />
@@ -1383,15 +1411,6 @@ function PageGlobalConfig({
               <span className="meta">PWM · {brightness}%</span>
             </div>
             <BrightnessSlider value={brightness} onChange={setBrightness} />
-            <div className="bf-led-strip">
-              <span className="bf-led-strip-label">PREVIEW · {presetCount} LEDS</span>
-              {Array.from({ length: presetCount }).map((_, i) => (
-                <span key={i} className="led-dot" style={{
-                  opacity: 0.15 + (brightness / 100) * 0.85,
-                  boxShadow: `0 0 ${4 + brightness / 8}px var(--accent-glow)`,
-                }} />
-              ))}
-            </div>
           </div>
 
           <div className="bf-card">
@@ -1507,6 +1526,137 @@ function PageGlobalConfig({
             </p>
           </div>
         </>
+      )}
+    </div>
+  );
+}
+
+// ─── ERASE DATA (destrutivo) ───────────────────────────────────────
+// Zera presets ou config global aos defaults. Cada acao tem confirmacao
+// porque nao tem undo (a menos que o usuario tenha um backup recente).
+function EraseDataCard() {
+  const [busy, setBusy] = useState(null);  // 'presets' | 'global' | null
+  const [msg, setMsg] = useState('');
+
+  const erase = useCallback(async (target, label) => {
+    const confirmMsg = target === 'presets'
+      ? 'APAGAR todos os presets? Esta acao reseta os 30 slots aos defaults e e IRREVERSIVEL (a menos que voce tenha um backup).'
+      : 'APAGAR a config global? Resetara paleta, brilho, auto-start, banks habilitados, etc. WiFi STA NAO e afetado. Irreversivel.';
+    if (!window.confirm(confirmMsg)) return;
+    setBusy(target);
+    setMsg('');
+    try {
+      await apiCall('POST', `/erase/${target}`);
+      setMsg(`${label} apagado(s) com sucesso.`);
+    } catch (e) {
+      setMsg('Falha: ' + e.message);
+    } finally {
+      setBusy(null);
+    }
+  }, []);
+
+  return (
+    <div className="bf-card" style={{ marginTop: 14 }}>
+      <div className="bf-card-head">
+        <h3>ZONA DE PERIGO</h3>
+        <span className="meta">IRREVERSIVEL</span>
+      </div>
+      <p style={{ fontSize: 13, color: 'var(--muted)', margin: '4px 4px 14px', lineHeight: 1.5 }}>
+        Reseta dados aos valores de fábrica. Faça um backup antes.
+      </p>
+      <div style={{ display: 'flex', gap: 10 }}>
+        <button
+          className="bf-action"
+          onClick={() => erase('presets', 'Presets')}
+          disabled={!!busy}
+          style={{ flex: 1 }}
+        >
+          ERASE ALL PRESETS
+        </button>
+        <button
+          className="bf-action"
+          onClick={() => erase('global', 'Config global')}
+          disabled={!!busy}
+          style={{ flex: 1 }}
+        >
+          ERASE GLOBAL CONFIG
+        </button>
+      </div>
+      {msg && (
+        <p style={{
+          marginTop: 12, fontFamily: 'var(--font-mono)', fontSize: 11,
+          letterSpacing: '0.08em',
+          color: msg.startsWith('Falha') ? 'var(--danger, #ff6b6b)' : 'var(--success, #30d158)',
+        }}>{msg}</p>
+      )}
+    </div>
+  );
+}
+
+// ─── HARD TEST ─────────────────────────────────────────────────────
+// 3 testes nao-bloqueantes (10s cada) + STOP. Botoes disparam POST
+// /hardtest?mode=leds|display|midi|stop. Logica do teste vive no
+// firmware (HARD_TEST.h) — frontend so dispara e mostra status.
+function HardTestCard() {
+  const [running, setRunning] = useState(null);  // 'leds'|'display'|'midi'|null
+  const [msg, setMsg] = useState('');
+
+  const fire = useCallback(async (mode) => {
+    setMsg('');
+    try {
+      await apiCall('POST', '/hardtest', `mode=${mode}`);
+      if (mode === 'stop') {
+        setRunning(null);
+        setMsg('Teste interrompido.');
+      } else {
+        setRunning(mode);
+        setMsg(`Teste ${mode.toUpperCase()} rodando...`);
+        // Auto-clear do estado UI apos a duracao do teste (firmware ja
+        // restaura sozinho). 10.5s pra cobrir folga do clock.
+        setTimeout(() => {
+          setRunning((cur) => (cur === mode ? null : cur));
+        }, 10500);
+      }
+    } catch (e) {
+      setMsg('Falha: ' + e.message);
+    }
+  }, []);
+
+  const isOn = (m) => running === m;
+  return (
+    <div className="bf-card">
+      <div className="bf-card-head">
+        <h3>HARD TEST</h3>
+        <span className="meta">DIAGNOSTICO</span>
+      </div>
+      <p style={{ fontSize: 13, color: 'var(--muted)', margin: '4px 4px 14px', lineHeight: 1.5 }}>
+        Cada teste roda por 10 segundos (MIDI envia PC 0–9 no canal 1, 1 por
+        segundo). Use STOP pra interromper.
+      </p>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
+        <button className={'bf-action' + (isOn('leds') ? ' is-running' : '')}
+                onClick={() => fire('leds')} disabled={!!running && !isOn('leds')}>
+          LEDS
+        </button>
+        <button className={'bf-action' + (isOn('display') ? ' is-running' : '')}
+                onClick={() => fire('display')} disabled={!!running && !isOn('display')}>
+          DISPLAY
+        </button>
+        <button className={'bf-action' + (isOn('midi') ? ' is-running' : '')}
+                onClick={() => fire('midi')} disabled={!!running && !isOn('midi')}>
+          MIDI
+        </button>
+      </div>
+      <button className="bf-action" style={{ marginTop: 10, width: '100%' }}
+              onClick={() => fire('stop')} disabled={!running}>
+        STOP
+      </button>
+      {msg && (
+        <p style={{
+          marginTop: 12, fontFamily: 'var(--font-mono)', fontSize: 11,
+          letterSpacing: '0.08em',
+          color: msg.startsWith('Falha') ? 'var(--danger, #ff6b6b)' : 'var(--muted)',
+        }}>{msg}</p>
       )}
     </div>
   );
@@ -1633,7 +1783,6 @@ function PageSystemConfig({
     return idx === -1 ? [model, ''] : [model.slice(0, idx), model.slice(idx + 1)];
   })();
   const list = MODELS.filter((m) => m.tag === family);
-  const activeModel = MODELS.find((m) => m.id === model) || list[0];
   const wifiConnected = !!(wifiStatus && wifiStatus.sta_connected);
 
   return (
@@ -1646,7 +1795,7 @@ function PageSystemConfig({
         connectionMode={connectionMode}
         onToggleConnectionMode={onToggleConnectionMode}
       />
-      <div className="bf-icon-tabs cols-3">
+      <div className="bf-icon-tabs cols-4">
           <button className={'bf-icon-tab' + (section === 'model' ? ' is-on' : '')} onClick={() => setSection('model')}>
             <svg viewBox="0 0 24 24" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               {/* Chip/MCU: corpo grande (14x14) + 2 pinos longos em cada lado + core dot */}
@@ -1680,40 +1829,48 @@ function PageSystemConfig({
             </svg>
             <span>BACKUP</span>
           </button>
+          <button className={'bf-icon-tab' + (section === 'hardtest' ? ' is-on' : '')} onClick={() => setSection('hardtest')}>
+            <svg viewBox="0 0 24 24" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              {/* Chave inglesa (hardware test) */}
+              <path className="bf-tab-shape" d="M14.7 6.3a4 4 0 0 1-5.4 5.4L4 17l3 3 5.3-5.3a4 4 0 0 1 5.4-5.4l-2.5 2.5-2-2 2.5-2.5z" />
+            </svg>
+            <span>HARD TEST</span>
+          </button>
         </div>
 
       {section === 'model' && (
         <div className="bf-card">
           <div className="bf-model-tabs">
-            {FAMILIES.map((f) => (
-              <button
-                key={f}
-                className={family === f ? 'is-active' : ''}
-                onClick={() => {
-                  const first = MODELS.find((m) => m.tag === f);
-                  if (first) setModel(first.id);
-                }}
-              >{f}</button>
-            ))}
+            {FAMILIES.map((f) => {
+              // "BFMIDI-1" → num="1", label="BFMIDI"
+              const num = (f.split('-')[1] || f).trim();
+              return (
+                <button
+                  key={f}
+                  className={family === f ? 'is-active' : ''}
+                  onClick={() => {
+                    const first = MODELS.find((m) => m.tag === f);
+                    if (first) setModel(first.id);
+                  }}
+                >
+                  <span className="num">{num}</span>
+                  <span className="label">BFMIDI</span>
+                </button>
+              );
+            })}
           </div>
 
-          {list.map((v) => (
-            <div
-              key={v.id}
-              className={'bf-model-row' + (model === v.id ? ' is-active' : '')}
-              onClick={() => setModel(v.id)}
-            >
-              <span className="bf-model-radio" />
-              <span className="bf-model-name">{v.id}</span>
-              <span className="bf-model-meta">{v.switches}SW · {v.size}</span>
-            </div>
-          ))}
-
-          <div className="bf-stats">
-            <div className="bf-stat"><span className="k">Active</span><span className="v accent">{model}</span></div>
-            <div className="bf-stat"><span className="k">Switches</span><span className="v">{activeModel?.switches}</span></div>
-            <div className="bf-stat"><span className="k">Display</span><span className="v">{family === 'BFMIDI-3' ? '480×320' : '320×240'}</span></div>
-            <div className="bf-stat"><span className="k">Firmware</span><span className="v">3.0.4</span></div>
+          <div className="bf-model-list">
+            {list.map((v) => (
+              <div
+                key={v.id}
+                className={'bf-model-row' + (model === v.id ? ' is-active' : '')}
+                onClick={() => setModel(v.id)}
+              >
+                <span className="bf-model-radio" />
+                <span className="bf-model-name">{v.id}</span>
+              </div>
+            ))}
           </div>
         </div>
       )}
@@ -1827,7 +1984,14 @@ function PageSystemConfig({
       )}
 
       {section === 'backup' && (
-        <BackupRestoreCard />
+        <>
+          <BackupRestoreCard />
+          <EraseDataCard />
+        </>
+      )}
+
+      {section === 'hardtest' && (
+        <HardTestCard />
       )}
     </div>
   );
@@ -1854,8 +2018,15 @@ function TabBar({ page, setPage, saveState, onSave }) {
         >{t.label}</button>
       ))}
       <button
-        className={'bf-save' + (saveState === 'saved' ? ' is-saved' : '') + (saveState === 'error' ? ' is-error' : '')}
+        className={'bf-save is-' + (saveState || 'idle')}
         onClick={onSave}
+        title={
+          saveState === 'dirty'  ? 'Mudancas nao salvas — clique pra salvar'
+          : saveState === 'saving' ? 'Salvando...'
+          : saveState === 'saved'  ? 'Tudo salvo'
+          : saveState === 'error'  ? 'Erro ao salvar'
+          : 'Salvar'
+        }
       >{saveLabel}</button>
     </div>
   );
@@ -2136,7 +2307,16 @@ function App() {
   const [presetSaveStatus, setPresetSaveStatus] = useState('idle');
   const registerPresetSave = useCallback((handle) => {
     presetSaveRef.current = handle || { save: null, status: 'idle', isDirty: false };
-    setPresetSaveStatus(handle ? handle.status : 'idle');
+    // 'dirty' e um estado *derivado* (idle + mudancas pendentes). O botao
+    // SAVE no TabBar usa o estado pra colorir: idle/branco, dirty/vermelho,
+    // saving/laranja, saved/verde, error/vermelho.
+    if (!handle) {
+      setPresetSaveStatus('idle');
+    } else if (handle.status === 'idle' && handle.isDirty) {
+      setPresetSaveStatus('dirty');
+    } else {
+      setPresetSaveStatus(handle.status);
+    }
   }, []);
 
   const [model, setModel] = useState('BFMIDI-3 7S');
@@ -2177,26 +2357,54 @@ function App() {
   // O icone WiFi do header so fica verde se o HTTP responder. USB pode estar
   // ativo simultaneamente; usamos apiCall (que pode rotear por USB) so para
   // dados, e fetch HTTP puro aqui exclusivamente para o status de WiFi.
+  //
+  // Estrategia robusta contra flicker:
+  //   - Endpoint /ping (resposta de 16 bytes em ~10ms, evita timeout em STA lenta)
+  //   - Timeout 5s (em vez de 3s) — STA via roteador pode demorar
+  //   - Polling 10s (em vez de 30s) — recupera mais rapido apos online
+  //   - 2 falhas seguidas antes de marcar offline (suaviza flicker de 1 ping perdido)
+  //   - Mostra 'loading' (amarelo) enquanto ainda esta no limbo (1 falha so)
+  const pingFailCountRef = useRef(0);
   const pingHttp = useCallback(async () => {
     if (!DEVICE_API) {
+      pingFailCountRef.current = 0;
       setDeviceState('offline');
       return false;
     }
-    try {
-      const r = await queuedFetch(apiUrl('/config/global'), { method: 'GET' }, 3000);
-      if (r.ok) {
-        setDeviceState('online');
-        return true;
+    // Tenta /ping primeiro (firmware novo, 16 bytes); se nao existir no
+    // firmware (404), cai no /config/global que sempre existiu — assim
+    // o health check nao depende do firmware estar atualizado.
+    const tryEndpoint = async (path, timeoutMs) => {
+      try {
+        const r = await queuedFetch(apiUrl(path), { method: 'GET' }, timeoutMs);
+        return r.ok;
+      } catch {
+        return false;
       }
-    } catch {}
-    setDeviceState('offline');
+    };
+    let ok = await tryEndpoint('/ping', 4000);
+    if (!ok) ok = await tryEndpoint('/config/global', 6000);
+    if (ok) {
+      pingFailCountRef.current = 0;
+      setDeviceState('online');
+      return true;
+    }
+    pingFailCountRef.current += 1;
+    if (pingFailCountRef.current >= 2) {
+      setDeviceState('offline');
+    } else {
+      // 1a falha: ainda nao desce pra offline; mostra "loading" pra
+      // sinalizar instabilidade sem alarmar com vermelho.
+      setDeviceState('loading');
+    }
     return false;
   }, []);
 
-  // Re-ping ao trocar estado de USB, modo AP/STA, e periodicamente a 30s.
+  // Re-ping ao trocar estado de USB, modo AP/STA, e periodicamente a 10s.
   useEffect(() => {
+    pingFailCountRef.current = 0;  // reset ao trocar contexto
     pingHttp();
-    const id = setInterval(pingHttp, 30000);
+    const id = setInterval(pingHttp, 10000);
     return () => clearInterval(id);
   }, [pingHttp, usbState, connectionMode]);
 
@@ -2430,6 +2638,9 @@ function App() {
             onToggleConnectionMode={toggleConnectionMode}
             onDisplayNameChange={setBankDisplayName}
             onRegisterPresetSave={registerPresetSave}
+            ledColorMode={ledColorMode}
+            letterLedColors={letterLedColors}
+            switchLedColors={switchLedColors}
           />
         )}
         {page === 'global_config' && (
