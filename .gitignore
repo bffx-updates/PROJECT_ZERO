@@ -4,8 +4,11 @@
 # quiser. Os padroes abaixo cobrem so a raiz, sem afetar webApp/.
 /*.h
 /*.ino
-/*.bat
 /*.csv
+# Bat scripts da raiz: ignora os de firmware (abrir_*, etc) mas mantem
+# o helper de commit/push pra publicar pelo GitHub.
+/*.bat
+!/subir_pro_github.bat
 /PROJECT_STRUCTURE.d
 /CLAUDE.md
 /data/
