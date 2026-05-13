@@ -786,9 +786,14 @@ function PresetEditorCard({ tag, onDisplayNameChange, onRegisterSave }) {
             onClick={() => setActiveTab('extras')}
           >
             <svg viewBox="0 0 24 24" className="bf-tab-ico" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path className="bf-tab-shape" d="M12 3l2.2 4.7 5.2.5-4 3.6 1.2 5.1L12 14.6l-4.6 2.3 1.2-5.1-4-3.6 5.2-.5z" />
-              <circle className="bf-tab-dot" cx="5"  cy="19" r="1.2" />
-              <circle className="bf-tab-dot" cx="19" cy="19" r="1.2" />
+              {/* Grupo escalado pra 86% centrado — sem isso a ponta do star
+                  com stroke arredondado encosta na borda do botao quando a
+                  fonte system mexe nos paddings ao redor. */}
+              <g transform="translate(12 12) scale(0.86) translate(-12 -12)">
+                <path className="bf-tab-shape" d="M12 3l2.2 4.7 5.2.5-4 3.6 1.2 5.1L12 14.6l-4.6 2.3 1.2-5.1-4-3.6 5.2-.5z" />
+                <circle className="bf-tab-dot" cx="5"  cy="19" r="1.2" />
+                <circle className="bf-tab-dot" cx="19" cy="19" r="1.2" />
+              </g>
             </svg>
             <span>EXTRAS</span>
           </button>
