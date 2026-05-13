@@ -2,7 +2,7 @@
 
 :root {
   --bg: #0a0a0c;
-  --screen: #07070a;
+  --screen: #1d1d1d;
   --card: #141418;
   --card-2: #1c1c20;
   --card-3: #232328;
@@ -407,9 +407,9 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
   position: relative;
   border-radius: 18px;
   background:
-    radial-gradient(70% 70% at 50% 30%, rgba(255,106,31,0.18) 0%, transparent 70%),
-    linear-gradient(180deg, #1b1b20 0%, #131318 100%);
-  border: 1px solid var(--hair);
+    radial-gradient(120% 80% at 50% 0%, rgba(255,106,31,0.32) 0%, transparent 70%),
+    linear-gradient(180deg, #2a1a10 0%, #18120e 100%);
+  border: 1px solid var(--accent);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -424,7 +424,7 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
   font-weight: 700;
   font-size: clamp(72px, 22vw, 150px);
   line-height: 1;
-  color: var(--accent);
+  color: #fff;
   text-shadow: 0 0 40px var(--accent-glow), 0 0 80px rgba(255,106,31,0.25);
   letter-spacing: -0.02em;
   text-align: center;
@@ -471,7 +471,7 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
   padding: 8px 10px;
   font-family: var(--font-display);
   cursor: pointer;
-  box-shadow: 0 0 6px rgba(220,220,230,0.14), 0 0 16px rgba(220,220,230,0.18);
+  box-shadow: 0 0 6px rgba(0,0,0,0.35), 0 0 16px rgba(0,0,0,0.4);
   transition: transform 0.15s ease, box-shadow 0.2s ease;
 }
 .bf-preset .num {
@@ -500,7 +500,6 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
   background:
     radial-gradient(120% 80% at 50% 0%, rgba(255,106,31,0.32) 0%, transparent 70%),
     linear-gradient(180deg, #2a1a10 0%, #18120e 100%);
-  box-shadow: 0 0 0 1px var(--accent-glow), 0 12px 40px -8px var(--accent-glow);
 }
 .bf-preset.is-active .num { color: var(--accent); }
 .bf-preset.is-active .led { background: var(--accent); box-shadow: 0 0 8px var(--accent-glow); }
@@ -1355,7 +1354,7 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
   border: 1px solid var(--hair);
   border-radius: 22px;
   padding: 20px 22px 22px;
-  box-shadow: 0 0 8px rgba(220,220,230,0.14), 0 0 22px rgba(220,220,230,0.18);
+  box-shadow: 0 0 8px rgba(0,0,0,0.35), 0 0 22px rgba(0,0,0,0.4);
 }
 .bf-preset-card-head {
   display: flex;
