@@ -664,7 +664,9 @@ function PresetEditorCard({ tag, onDisplayNameChange, onRegisterSave }) {
   const [metaByTag, setMetaByTag] = useState({});
   const [savedMetaByTag, setSavedMetaByTag] = useState({});
   const [status, setStatus] = useState('idle'); // idle | loading | saving | saved | error
-  const [activeTab, setActiveTab] = useState('midi'); // midi | display
+  const [activeTab, setActiveTab] = useState('midi'); // midi | display | extras | monitor
+  const [monitorEntry, setMonitorEntry] = useState(null);
+  const monitorLastTagRef = useRef(null);
   const meta = metaByTag[tag] || DEFAULT_PRESET_META();
   const savedMeta = savedMetaByTag[tag];
   const isDirty = savedMeta
@@ -717,6 +719,27 @@ function PresetEditorCard({ tag, onDisplayNameChange, onRegisterSave }) {
     if (onDisplayNameChange) onDisplayNameChange(meta.name || '');
   }, [meta.name, tag, onDisplayNameChange]);
 
+  // Monitor: substitui o conteudo a cada chamada de preset (mudanca de
+  // tag). Espera o saved meta carregar pra ter PC/CH corretos. Nao guarda
+  // historico — eh um monitor de conferencia do dado atual.
+  useEffect(() => {
+    const saved = savedMetaByTag[tag];
+    if (!saved) return;
+    if (monitorLastTagRef.current === tag) return;
+    monitorLastTagRef.current = tag;
+    const now = new Date();
+    const hh = String(now.getHours()).padStart(2, '0');
+    const mm = String(now.getMinutes()).padStart(2, '0');
+    const ss = String(now.getSeconds()).padStart(2, '0');
+    setMonitorEntry({
+      tag,
+      name: saved.name || tag,
+      pc: saved.bank,
+      ch: saved.channel,
+      time: `${hh}:${mm}:${ss}`,
+    });
+  }, [tag, savedMetaByTag]);
+
   // Registra savePreset + estado pro botao SAVE global (TabBar) acionar.
   useEffect(() => {
     if (!onRegisterSave) return;
@@ -761,12 +784,18 @@ function PresetEditorCard({ tag, onDisplayNameChange, onRegisterSave }) {
             onClick={() => setActiveTab('midi')}
           >
             <svg viewBox="0 0 24 24" className="bf-tab-ico" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <circle className="bf-tab-shape" cx="12" cy="12" r="9" />
-              <circle className="bf-tab-dot"   cx="12"  cy="7"  r="1.4" />
-              <circle className="bf-tab-dot"   cx="7.5" cy="10" r="1.4" />
-              <circle className="bf-tab-dot"   cx="16.5" cy="10" r="1.4" />
-              <circle className="bf-tab-dot"   cx="9"   cy="15" r="1.4" />
-              <circle className="bf-tab-dot"   cx="15"  cy="15" r="1.4" />
+              {/* Conector DIN: corpo circular, 8 pinos em arco superior +
+                  entalhe inferior tipico do conector MIDI */}
+              <circle className="bf-tab-shape" cx="12" cy="12" r="8.5" />
+              <circle className="bf-tab-dot" cx="12"   cy="6.5"  r="1.0" />
+              <circle className="bf-tab-dot" cx="8.5"  cy="7.4"  r="1.0" />
+              <circle className="bf-tab-dot" cx="15.5" cy="7.4"  r="1.0" />
+              <circle className="bf-tab-dot" cx="6.5"  cy="10"   r="1.0" />
+              <circle className="bf-tab-dot" cx="17.5" cy="10"   r="1.0" />
+              <circle className="bf-tab-dot" cx="6.5"  cy="13"   r="1.0" />
+              <circle className="bf-tab-dot" cx="17.5" cy="13"   r="1.0" />
+              <circle className="bf-tab-dot" cx="12"   cy="15.5" r="1.0" />
+              <path className="bf-tab-shape" d="M10 19 L12 21 L14 19" />
             </svg>
             <span>MIDI</span>
           </button>
@@ -778,12 +807,14 @@ function PresetEditorCard({ tag, onDisplayNameChange, onRegisterSave }) {
             onClick={() => setActiveTab('display')}
           >
             <svg viewBox="0 0 24 24" className="bf-tab-ico" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path className="bf-tab-shape" d="M12 3c5 0 9 3.4 9 7.6 0 2.6-2 4.4-4.4 4.4h-1.4c-1.1 0-2 .9-2 2 0 1.6-1.3 2-2.2 2-5 0-9-3.6-9-8S7 3 12 3z" />
-              <circle className="bf-tab-dot" cx="7.5" cy="10.5" r="1.1" />
-              <circle className="bf-tab-dot" cx="10"  cy="7"    r="1.1" />
-              <circle className="bf-tab-dot" cx="14"  cy="7"    r="1.1" />
-              <circle className="bf-tab-dot" cx="16.5" cy="10.5" r="1.1" />
-              <path className="bf-tab-line" d="M17.5 14.5l3 3" />
+              {/* Monitor com EQ bars de altura variada + pe pequeno */}
+              <rect className="bf-tab-shape" x="2.5" y="4.5" width="19" height="12" rx="1.6" />
+              <rect className="bf-tab-dot" x="6"  y="11" width="1.6" height="3.5" />
+              <rect className="bf-tab-dot" x="9"  y="9"  width="1.6" height="5.5" />
+              <rect className="bf-tab-dot" x="12" y="7"  width="1.6" height="7.5" />
+              <rect className="bf-tab-dot" x="15" y="10" width="1.6" height="4.5" />
+              <rect className="bf-tab-dot" x="18" y="12" width="1.6" height="2.5" />
+              <path className="bf-tab-shape" d="M9 21h6 M12 16.5v4.5" />
             </svg>
             <span>DISPLAY</span>
           </button>
@@ -795,16 +826,31 @@ function PresetEditorCard({ tag, onDisplayNameChange, onRegisterSave }) {
             onClick={() => setActiveTab('extras')}
           >
             <svg viewBox="0 0 24 24" className="bf-tab-ico" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              {/* Grupo escalado pra 86% centrado — sem isso a ponta do star
-                  com stroke arredondado encosta na borda do botao quando a
-                  fonte system mexe nos paddings ao redor. */}
-              <g transform="translate(12 12) scale(0.86) translate(-12 -12)">
-                <path className="bf-tab-shape" d="M12 3l2.2 4.7 5.2.5-4 3.6 1.2 5.1L12 14.6l-4.6 2.3 1.2-5.1-4-3.6 5.2-.5z" />
-                <circle className="bf-tab-dot" cx="5"  cy="19" r="1.2" />
-                <circle className="bf-tab-dot" cx="19" cy="19" r="1.2" />
-              </g>
+              {/* Tres faders verticais com handles em alturas diferentes */}
+              <path className="bf-tab-shape" d="M6 4V20" />
+              <path className="bf-tab-shape" d="M12 4V20" />
+              <path className="bf-tab-shape" d="M18 4V20" />
+              <circle className="bf-tab-shape" cx="6"  cy="10" r="2.3" />
+              <circle className="bf-tab-shape" cx="12" cy="15" r="2.3" />
+              <circle className="bf-tab-shape" cx="18" cy="8"  r="2.3" />
             </svg>
             <span>EXTRAS</span>
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'monitor'}
+            className={'bf-preset-tab' + (activeTab === 'monitor' ? ' is-active' : '')}
+            onClick={() => setActiveTab('monitor')}
+          >
+            <svg viewBox="0 0 24 24" className="bf-tab-ico" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              {/* Terminal/console: tela com prompt > e linha */}
+              <rect className="bf-tab-shape" x="2.5" y="4" width="19" height="14" rx="1.6" />
+              <path className="bf-tab-line" d="M6 9l2 2-2 2" />
+              <path className="bf-tab-line" d="M11 13h6" />
+              <path className="bf-tab-shape" d="M9 21h6 M12 18v3" />
+            </svg>
+            <span>MONITOR</span>
           </button>
         </div>
       </div>
@@ -1081,12 +1127,92 @@ function PresetEditorCard({ tag, onDisplayNameChange, onRegisterSave }) {
           </div>
         )}
 
+        {activeTab === 'monitor' && (
+          <div className="bf-monitor">
+            {!monitorEntry ? (
+              <div className="bf-monitor-empty">Aguardando chamada de preset...</div>
+            ) : (
+              <div key={monitorEntry.tag + '@' + monitorEntry.time} className="bf-monitor-entry">
+                <div className="bf-monitor-line">
+                  <span className="bf-monitor-time">{monitorEntry.time}</span>
+                  <span className="bf-monitor-tag">{monitorEntry.tag}</span>
+                  <span className="bf-monitor-sep">-</span>
+                  <span className="bf-monitor-name">{monitorEntry.name}</span>
+                </div>
+                <div className="bf-monitor-line bf-monitor-header">
+                  HEADER = PC {monitorEntry.pc} - CH {monitorEntry.ch}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         {(statusLabel || (isDirty && status === 'idle')) && (
           <p className="bf-hint">
             {statusLabel && <span className={'bf-hint-status is-' + status}>{statusLabel}</span>}
             {isDirty && status === 'idle' && <span className="bf-hint-status is-dirty">NAO SALVO</span>}
           </p>
         )}
+      </div>
+    </div>
+  );
+}
+
+// Header compartilhado entre as 3 paginas (PRESET / GLOBAL / SYSTEM):
+// titulo grande a esquerda + chip AP/STA + chip USB a direita.
+function PageHeader({
+  title, deviceState, usbState, onToggleUsb,
+  connectionMode, onToggleConnectionMode,
+}) {
+  return (
+    <div className="bf-header bf-header-preset">
+      <h1 className="bf-title">{title}</h1>
+      <div className="bf-conn-icons">
+        <button
+          type="button"
+          className={'bf-conn-mode is-' + deviceState + ' is-mode-' + (connectionMode || 'AP').toLowerCase()}
+          onClick={onToggleConnectionMode}
+          aria-label={`Modo de conexao WiFi: ${connectionMode}. Toque para alternar.`}
+          title={
+            `Modo ${connectionMode} — ` +
+            (deviceState === 'online' ? 'CONECTADO'
+              : deviceState === 'loading' ? 'CONECTANDO'
+              : 'OFFLINE — toque pra trocar pra ' + (connectionMode === 'AP' ? 'STA' : 'AP'))
+          }
+        >
+          <span className="bf-conn-mode-label">{connectionMode || 'AP'}</span>
+        </button>
+
+        <button
+          type="button"
+          className={'bf-conn-icon is-' + usbState}
+          onClick={onToggleUsb}
+          disabled={usbState === 'unsupported'}
+          aria-label={
+            usbState === 'connected' ? 'USB conectado — clique para desconectar'
+            : usbState === 'connecting' ? 'USB conectando'
+            : usbState === 'unsupported' ? 'USB indisponivel neste browser'
+            : 'USB offline — clique para conectar'
+          }
+          title={
+            usbState === 'connected' ? 'USB ONLINE'
+            : usbState === 'connecting' ? 'USB CONECTANDO'
+            : usbState === 'unsupported' ? 'Web Serial nao suportado'
+            : usbState === 'error' ? 'USB falhou — clique para tentar de novo'
+            : 'USB OFFLINE — clique para conectar'
+          }
+        >
+          {/* Icone USB tradicional: trident apontando pra cima. */}
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M12 2L8.5 6.5H15.5Z" fill="currentColor" stroke="none" />
+            <path d="M12 6.5V20.5" />
+            <path d="M12 13H7V17" />
+            <rect x="5.5" y="16.5" width="3" height="3" fill="currentColor" stroke="none" />
+            <path d="M12 10H17V14" />
+            <circle cx="17" cy="15.2" r="1.5" fill="currentColor" stroke="none" />
+            <circle cx="12" cy="21" r="1.8" fill="currentColor" stroke="none" />
+          </svg>
+        </button>
       </div>
     </div>
   );
@@ -1105,56 +1231,14 @@ function PagePresetConfig({
   const tileName = (bankDisplayName && bankDisplayName.trim()) || tag;
   return (
     <div className="bf-content" key="bank">
-      <div className="bf-header bf-header-preset">
-        <h1 className="bf-title">SET PRESET</h1>
-        <div className="bf-conn-icons">
-          <button
-            type="button"
-            className={'bf-conn-mode is-' + deviceState + ' is-mode-' + (connectionMode || 'AP').toLowerCase()}
-            onClick={onToggleConnectionMode}
-            aria-label={`Modo de conexao WiFi: ${connectionMode}. Toque para alternar.`}
-            title={
-              `Modo ${connectionMode} — ` +
-              (deviceState === 'online' ? 'CONECTADO'
-                : deviceState === 'loading' ? 'CONECTANDO'
-                : 'OFFLINE — toque pra trocar pra ' + (connectionMode === 'AP' ? 'STA' : 'AP'))
-            }
-          >
-            <span className="bf-conn-mode-label">{connectionMode || 'AP'}</span>
-          </button>
-
-          <button
-            type="button"
-            className={'bf-conn-icon is-' + usbState}
-            onClick={onToggleUsb}
-            disabled={usbState === 'unsupported'}
-            aria-label={
-              usbState === 'connected' ? 'USB conectado — clique para desconectar'
-              : usbState === 'connecting' ? 'USB conectando'
-              : usbState === 'unsupported' ? 'USB indisponivel neste browser'
-              : 'USB offline — clique para conectar'
-            }
-            title={
-              usbState === 'connected' ? 'USB ONLINE'
-              : usbState === 'connecting' ? 'USB CONECTANDO'
-              : usbState === 'unsupported' ? 'Web Serial nao suportado'
-              : usbState === 'error' ? 'USB falhou — clique para tentar de novo'
-              : 'USB OFFLINE — clique para conectar'
-            }
-          >
-            {/* Icone USB tradicional: trident */}
-            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <circle cx="12" cy="3.5" r="1.6" fill="currentColor" />
-              <path d="M12 5v14" />
-              <path d="M8 10l4-4 4 4" />
-              <path d="M12 11l-4 3v3" />
-              <rect x="7" y="17" width="2" height="2" fill="currentColor" />
-              <path d="M12 13l4 2v2" />
-              <circle cx="16" cy="17" r="1.4" fill="currentColor" />
-            </svg>
-          </button>
-        </div>
-      </div>
+      <PageHeader
+        title="SET PRESET"
+        deviceState={deviceState}
+        usbState={usbState}
+        onToggleUsb={onToggleUsb}
+        connectionMode={connectionMode}
+        onToggleConnectionMode={onToggleConnectionMode}
+      />
 
       <div className="bf-bank-row">
         <button
@@ -1195,52 +1279,77 @@ function PageGlobalConfig({
   letterLedColors, setLetterLedColors,
   switchLedColors, setSwitchLedColors,
   presetCount,
+  deviceState, usbState, onToggleUsb,
+  connectionMode, onToggleConnectionMode,
 }) {
   const [section, setSection] = useState('leds');
   const letters = ['A', 'B', 'C', 'D', 'E'];
 
   return (
     <div className="bf-content" key="global">
-      <div className="bf-header">
-        <div className="bf-eyebrow"><span className="dot" /> CONFIG · GLOBAL</div>
-        <h1 className="bf-title">Global</h1>
-        <p className="bf-subtitle">MIDI, display, LEDs e banks.</p>
-        <div className="bf-icon-tabs">
+      <PageHeader
+        title="GLOBAL"
+        deviceState={deviceState}
+        usbState={usbState}
+        onToggleUsb={onToggleUsb}
+        connectionMode={connectionMode}
+        onToggleConnectionMode={onToggleConnectionMode}
+      />
+      <div className="bf-icon-tabs">
           <button className={'bf-icon-tab' + (section === 'midi' ? ' is-on' : '')} onClick={() => setSection('midi')}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="12" cy="12" r="9.5"/>
-              <circle cx="6.5" cy="12" r="1.1" fill="currentColor"/>
-              <circle cx="17.5" cy="12" r="1.1" fill="currentColor"/>
-              <circle cx="9" cy="7.5" r="1.1" fill="currentColor"/>
-              <circle cx="15" cy="7.5" r="1.1" fill="currentColor"/>
-              <circle cx="12" cy="16.5" r="1.1" fill="currentColor"/>
+            <svg viewBox="0 0 24 24" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              {/* Conector DIN MIDI: 8 pinos em arco + entalhe inferior */}
+              <circle className="bf-tab-shape" cx="12" cy="12" r="8.5" />
+              <circle className="bf-tab-dot" cx="12"   cy="6.5"  r="1.0" />
+              <circle className="bf-tab-dot" cx="8.5"  cy="7.4"  r="1.0" />
+              <circle className="bf-tab-dot" cx="15.5" cy="7.4"  r="1.0" />
+              <circle className="bf-tab-dot" cx="6.5"  cy="10"   r="1.0" />
+              <circle className="bf-tab-dot" cx="17.5" cy="10"   r="1.0" />
+              <circle className="bf-tab-dot" cx="6.5"  cy="13"   r="1.0" />
+              <circle className="bf-tab-dot" cx="17.5" cy="13"   r="1.0" />
+              <circle className="bf-tab-dot" cx="12"   cy="15.5" r="1.0" />
+              <path className="bf-tab-shape" d="M10 19 L12 21 L14 19" />
             </svg>
             <span>MIDI</span>
           </button>
           <button className={'bf-icon-tab' + (section === 'display' ? ' is-on' : '')} onClick={() => setSection('display')}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="3" y="4.5" width="18" height="13" rx="2"/>
-              <path d="M8 21h8M12 17.5V21"/>
+            <svg viewBox="0 0 24 24" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              {/* Monitor com EQ bars + pe pequeno */}
+              <rect className="bf-tab-shape" x="2.5" y="4.5" width="19" height="12" rx="1.6" />
+              <rect className="bf-tab-dot" x="6"  y="11" width="1.6" height="3.5" />
+              <rect className="bf-tab-dot" x="9"  y="9"  width="1.6" height="5.5" />
+              <rect className="bf-tab-dot" x="12" y="7"  width="1.6" height="7.5" />
+              <rect className="bf-tab-dot" x="15" y="10" width="1.6" height="4.5" />
+              <rect className="bf-tab-dot" x="18" y="12" width="1.6" height="2.5" />
+              <path className="bf-tab-shape" d="M9 21h6 M12 16.5v4.5" />
             </svg>
             <span>DISPLAY</span>
           </button>
           <button className={'bf-icon-tab' + (section === 'leds' ? ' is-on' : '')} onClick={() => setSection('leds')}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M9 17.5h6M10 20.5h4"/>
-              <path d="M12 3.5a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 1.9v.7h5v-.7c0-.7.4-1.4 1-1.9A6 6 0 0 0 12 3.5z"/>
+            <svg viewBox="0 0 24 24" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              {/* Anel de LEDs: circulo principal + 8 pontos ao redor */}
+              <circle className="bf-tab-shape" cx="12" cy="12" r="7.5" />
+              <circle className="bf-tab-dot" cx="12"   cy="3.5"  r="1.1" />
+              <circle className="bf-tab-dot" cx="18.0" cy="6.0"  r="1.1" />
+              <circle className="bf-tab-dot" cx="20.5" cy="12"   r="1.1" />
+              <circle className="bf-tab-dot" cx="18.0" cy="18.0" r="1.1" />
+              <circle className="bf-tab-dot" cx="12"   cy="20.5" r="1.1" />
+              <circle className="bf-tab-dot" cx="6.0"  cy="18.0" r="1.1" />
+              <circle className="bf-tab-dot" cx="3.5"  cy="12"   r="1.1" />
+              <circle className="bf-tab-dot" cx="6.0"  cy="6.0"  r="1.1" />
             </svg>
             <span>LEDS</span>
           </button>
           <button className={'bf-icon-tab' + (section === 'banks' ? ' is-on' : '')} onClick={() => setSection('banks')}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M12 3.5L3 8l9 4.5L21 8l-9-4.5z"/>
-              <path d="M3 12l9 4.5L21 12"/>
-              <path d="M3 16l9 4.5L21 16"/>
+            <svg viewBox="0 0 24 24" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              {/* Pilha de banks (3 camadas) */}
+              <path className="bf-tab-shape" d="M12 3.5 L3 8 L12 12.5 L21 8 Z" />
+              <path className="bf-tab-shape" d="M3 12 L12 16.5 L21 12" />
+              <path className="bf-tab-shape" d="M3 16 L12 20.5 L21 16" />
             </svg>
             <span>BANKS</span>
           </button>
         </div>
-      </div>
 
       {section === 'midi' && (
         <div className="bf-card">
@@ -1409,6 +1518,8 @@ function PageSystemConfig({
   wifiStatus, wifiNetworks, wifiSsid, setWifiSsid,
   wifiPassword, setWifiPassword, wifiState,
   onWifiScan, onWifiConnect, onWifiDisconnect,
+  deviceState, usbState, onToggleUsb,
+  connectionMode, onToggleConnectionMode,
 }) {
   const [section, setSection] = useState('model');
   const [family, variant] = (() => {
@@ -1421,18 +1532,38 @@ function PageSystemConfig({
 
   return (
     <div className="bf-content" key="system">
-      <div className="bf-header">
-        <div className="bf-eyebrow">
-          <span className="dot" /> SYSTEM · DEVICE
-          <span className="pill">v3.0.4</span>
+      <PageHeader
+        title="SYSTEM"
+        deviceState={deviceState}
+        usbState={usbState}
+        onToggleUsb={onToggleUsb}
+        connectionMode={connectionMode}
+        onToggleConnectionMode={onToggleConnectionMode}
+      />
+      <div className="bf-icon-tabs cols-3">
+          <button className={'bf-icon-tab' + (section === 'model' ? ' is-on' : '')} onClick={() => setSection('model')}>
+            <svg viewBox="0 0 24 24" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              {/* Chip/MCU: corpo grande (14x14) + 2 pinos longos em cada lado + core dot */}
+              <rect className="bf-tab-shape" x="5" y="5" width="14" height="14" rx="1.5" />
+              <rect className="bf-tab-dot" x="9" y="9" width="6" height="6" />
+              <path className="bf-tab-line" d="M9 2V5 M15 2V5" />
+              <path className="bf-tab-line" d="M9 19V22 M15 19V22" />
+              <path className="bf-tab-line" d="M2 9H5 M2 15H5" />
+              <path className="bf-tab-line" d="M19 9H22 M19 15H22" />
+            </svg>
+            <span>MODELO</span>
+          </button>
+          <button className={'bf-icon-tab' + (section === 'wifi' ? ' is-on' : '')} onClick={() => setSection('wifi')}>
+            <svg viewBox="0 0 24 24" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              {/* WiFi: 3 ondas concentricas + ponto na base, ocupando todo o viewBox */}
+              <path className="bf-tab-shape" d="M2 8.5 Q12 0 22 8.5" />
+              <path className="bf-tab-shape" d="M5 13 Q12 6 19 13" />
+              <path className="bf-tab-shape" d="M8.5 17.5 Q12 14 15.5 17.5" />
+              <circle className="bf-tab-dot" cx="12" cy="21" r="1.5" />
+            </svg>
+            <span>WI‑FI</span>
+          </button>
         </div>
-        <h1 className="bf-title">System</h1>
-        <p className="bf-subtitle">Modelo e conexão Wi‑Fi.</p>
-        <div style={{ display: 'flex', gap: 6, marginTop: 12 }}>
-          <button className={'bf-chip' + (section === 'model' ? ' is-on' : '')} onClick={() => setSection('model')}>MODELO</button>
-          <button className={'bf-chip' + (section === 'wifi' ? ' is-on' : '')} onClick={() => setSection('wifi')}>WI‑FI</button>
-        </div>
-      </div>
 
       {section === 'model' && (
         <div className="bf-card">
@@ -2027,6 +2158,16 @@ function App() {
   };
   useEffect(() => { if (page === 'preset_config') loadBankCurrent(); }, [page, usbState]);
 
+  // Polling do bank atual enquanto a page de preset esta ativa. Cobre
+  // mudancas feitas direto no hardware (footswitches) — sem isso, o app
+  // so atualiza quando o usuario interage pela UI. 1.5s e um meio termo
+  // entre responsividade percebida e carga no ESP32.
+  useEffect(() => {
+    if (page !== 'preset_config') return;
+    const id = setInterval(() => { loadBankCurrent(); }, 1500);
+    return () => clearInterval(id);
+  }, [page, usbState]);
+
   const selectBank = async (li, pn) => {
     setBankState('loading');
     try {
@@ -2183,6 +2324,11 @@ function App() {
             letterLedColors={letterLedColors} setLetterLedColors={setLetterLedColors}
             switchLedColors={switchLedColors} setSwitchLedColors={setSwitchLedColors}
             presetCount={presetCount}
+            deviceState={deviceState}
+            usbState={usbState}
+            onToggleUsb={toggleUsb}
+            connectionMode={connectionMode}
+            onToggleConnectionMode={toggleConnectionMode}
           />
         )}
         {page === 'system_config' && (
@@ -2195,6 +2341,11 @@ function App() {
             onWifiScan={scanWifiNetworks}
             onWifiConnect={connectWifiSta}
             onWifiDisconnect={disconnectWifiSta}
+            deviceState={deviceState}
+            usbState={usbState}
+            onToggleUsb={toggleUsb}
+            connectionMode={connectionMode}
+            onToggleConnectionMode={toggleConnectionMode}
           />
         )}
         <TabBar
