@@ -3,8 +3,8 @@
   "short_name": "BFMIDI",
   "description": "Editor de presets para BFMIDI Project Zero",
   "lang": "pt-BR",
-  "start_url": "/PROJECT_ZERO/webApp/index.html",
-  "scope": "/PROJECT_ZERO/webApp/",
+  "start_url": "./index.html",
+  "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#0a0a0c",
@@ -12,31 +12,31 @@
   "categories": ["music", "utilities"],
   "icons": [
     {
-      "src": "/PROJECT_ZERO/webApp/icons/app-192.png",
+      "src": "icons/app-192.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/PROJECT_ZERO/webApp/icons/app-512.png",
+      "src": "icons/app-512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/PROJECT_ZERO/webApp/icons/app-192.png",
+      "src": "icons/app-192.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "maskable"
     },
     {
-      "src": "/PROJECT_ZERO/webApp/icons/app-512.png",
+      "src": "icons/app-512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"
     },
     {
-      "src": "/PROJECT_ZERO/webApp/icons/app.svg",
+      "src": "icons/app.svg",
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "any"

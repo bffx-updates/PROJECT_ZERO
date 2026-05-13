@@ -213,8 +213,9 @@ function isLocalPreviewHost(h) {
 }
 // Device API e mutavel: a tela de conexao pode trocar o IP em runtime,
 // e o resultado e persistido em localStorage pra autoreconexao no proximo
-// boot. Em .bat localhost ja vem com DEFAULT_DEVICE_API; em Pages HTTPS
-// comeca vazio e a tela de conexao guia o usuario.
+// boot. Em .bat localhost ja vem com DEFAULT_DEVICE_API; quando o webApp
+// ja roda dentro do ESP32 (same-origin), DEVICE_API fica '' e os fetchs
+// usam paths relativos.
 let DEVICE_API = normalizeApiBase(URL_API) ||
                  (isLocalPreviewHost(location.hostname) ? DEFAULT_DEVICE_API : '') ||
                  (typeof localStorage !== 'undefined' ? (localStorage.getItem('bfmidi_deviceApi') || '') : '');
@@ -226,6 +227,23 @@ function setDeviceApi(url) {
 function clearDeviceApi() {
   DEVICE_API = '';
   try { localStorage.removeItem('bfmidi_deviceApi'); } catch {}
+}
+
+let _httpQueue = Promise.resolve();
+
+function queuedFetch(url, init = {}, timeoutMs = 12000) {
+  const run = async () => {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      return await fetch(url, { ...init, signal: ctrl.signal });
+    } finally {
+      clearTimeout(t);
+    }
+  };
+  const task = _httpQueue.then(run, run);
+  _httpQueue = task.catch(() => {});
+  return task;
 }
 
 // Transport selector: o webApp pode falar com o firmware via HTTP (WiFi) ou
@@ -258,7 +276,8 @@ async function apiCallUsb(method, path, body) {
 async function apiCallHttp(method, path, body) {
   const init = { method };
   if (body !== undefined && body !== null && body !== '') init.body = body;
-  const r = await fetch(apiUrl(path), init);
+  const timeoutMs = path.startsWith('/wifi/connect') ? 18000 : 12000;
+  const r = await queuedFetch(apiUrl(path), init, timeoutMs);
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   // Alguns endpoints HTTP retornam texto puro ("OK"). Tenta parsear como
   // JSON; se falhar, devolve um objeto vazio (callers que precisam dos
@@ -1063,7 +1082,6 @@ function PagePresetConfig({
   bankLetterIndex, presetNumber, bankData, bankDisplayName, bankState, deviceState,
   usbState, onToggleUsb,
   connectionMode, onToggleConnectionMode,
-  onShowCertHelp,
   presetCount, onNextLetter, onSelectPreset, onDisplayNameChange,
   onRegisterPresetSave,
 }) {
@@ -1092,20 +1110,6 @@ function PagePresetConfig({
             <span className="bf-conn-mode-sub">
               {connectionMode === 'STA' ? 'bfmidi.local' : '192.168.4.1'}
             </span>
-          </button>
-
-          <button
-            type="button"
-            className="bf-conn-icon bf-conn-cert"
-            onClick={onShowCertHelp}
-            aria-label="Instalar certificado HTTPS"
-            title="Instalar certificado HTTPS (necessario no iPad/iPhone)"
-          >
-            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <rect x="5" y="10" width="14" height="10" rx="1.5" />
-              <path d="M8 10V7a4 4 0 0 1 8 0v3" />
-              <circle cx="12" cy="15" r="1.2" fill="currentColor" />
-            </svg>
           </button>
 
           <button
@@ -1595,7 +1599,7 @@ function TabBar({ page, setPage, saveState, onSave }) {
 }
 
 // ─── Tela de conexao (gate inicial) ─────────────────────────────────
-// Quando o webApp roda hospedado (Pages HTTPS), comeca sem device API
+// Quando o webApp roda hospedado standalone, comeca sem device API
 // definido. Esta tela pergunta qual IP usar (AP do pedal, STA via mDNS,
 // ou manual) e/ou oferece USB Web Serial. Apos sucesso, esconde e o
 // editor segue normal.
@@ -1609,7 +1613,7 @@ function ConnectionScreen({ onWifiConnect, onUsbToggle, usbState, error,
     if (!ip.trim()) return;
     const clean = ip.trim().replace(/^https?:\/\//, '');
     localStorage.setItem('bfmidi_lastManualIp', clean);
-    onWifiConnect('http://' + clean);
+    onWifiConnect('https://' + clean);
   };
 
   return (
@@ -1697,97 +1701,11 @@ function ConnectionScreen({ onWifiConnect, onUsbToggle, usbState, error,
   );
 }
 
-// ─── Cert install modal (iOS / outros) ─────────────────────────────
-// O firmware so serve HTTPS (cert self-signed embutido). Pra Safari iOS
-// aceitar os fetches HTTPS->bfmidi.local sem mixed-content/cert-invalido,
-// o usuario precisa instalar o cert publico no SO. Hospedamos uma copia
-// publica do .crt aqui mesmo (webApp/bfmidi.crt) — assim funciona antes
-// de conectar no device. A chave privada NUNCA sai do firmware/certs/.
-function detectPlatform() {
-  if (typeof navigator === 'undefined') return 'unknown';
-  const ua = navigator.userAgent || '';
-  const isIOS = /iPad|iPhone|iPod/.test(ua) ||
-                (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-  if (isIOS) return 'ios';
-  if (/Android/i.test(ua)) return 'android';
-  if (/Macintosh/i.test(ua)) return 'mac';
-  if (/Windows/i.test(ua)) return 'win';
-  return 'other';
-}
-
-function CertInstallModal({ open, onClose }) {
-  if (!open) return null;
-  const platform = detectPlatform();
-  const certHref = './bfmidi.crt';
-  const steps = {
-    ios: [
-      'Toque em "Baixar certificado" abaixo. Safari vai pedir para permitir o download de um perfil de configuracao — confirme.',
-      'Abra Ajustes → Geral → VPN e Gerenciamento de Dispositivos. Toque no perfil BFMIDI e em Instalar (pode pedir o codigo do iPad).',
-      'IMPORTANTE: Ajustes → Geral → Sobre → Ajustes de Confianca do Certificado. Ative o interruptor ao lado de "bfmidi.local". Sem isso o Safari continua bloqueando.',
-      'Volte ao app. Conecte o iPad na rede do BFMIDI (AP) ou na mesma rede WiFi do pedal (STA). O app deve conectar normalmente.',
-    ],
-    mac: [
-      'Clique em "Baixar certificado". O arquivo bfmidi.crt sera salvo.',
-      'Abra o arquivo — o Acesso a Chaveiros (Keychain) vai abrir. Adicione ao chaveiro "Sistema" (ou "Login").',
-      'Localize "bfmidi.local" no chaveiro, clique duas vezes, expanda "Confiar" e marque "Confiar Sempre" em SSL.',
-      'Pronto. Conecte o Mac na rede do pedal e o app vai funcionar.',
-    ],
-    android: [
-      'Clique em "Baixar certificado". O arquivo bfmidi.crt vai pra Downloads.',
-      'Ajustes → Seguranca → Criptografia e credenciais → Instalar um certificado → Certificado CA. Selecione o arquivo.',
-      'No Chrome novo (Android 12+), a maioria dos casos funciona sem instalar (Private Network Access). Tente primeiro sem instalar.',
-    ],
-    win: [
-      'Clique em "Baixar certificado". O arquivo bfmidi.crt sera salvo.',
-      'Clique duas vezes no .crt → "Instalar Certificado" → "Computador Local" → "Colocar todos os certificados no seguinte armazenamento" → procure "Autoridades de Certificacao Raiz Confiaveis".',
-      'Reabra o browser. No Chrome, tambem funciona via Private Network Access sem instalar.',
-    ],
-    other: [
-      'Clique em "Baixar certificado" e instale como autoridade de certificacao raiz confiavel no seu sistema operacional.',
-    ],
-  };
-  const platformLabel = {
-    ios: 'iPad / iPhone (Safari)',
-    mac: 'Mac (Safari / Chrome)',
-    android: 'Android',
-    win: 'Windows',
-    other: 'Seu dispositivo',
-  }[platform];
-  return (
-    <div className="bf-modal-backdrop" onClick={onClose} role="dialog" aria-modal="true">
-      <div className="bf-modal" onClick={(e) => e.stopPropagation()}>
-        <div className="bf-modal-head">
-          <h2 className="bf-modal-title">INSTALAR CERTIFICADO</h2>
-          <button type="button" className="bf-modal-close" onClick={onClose} aria-label="Fechar">x</button>
-        </div>
-        <div className="bf-modal-body">
-          <p className="bf-modal-lead">
-            O pedal BFMIDI usa HTTPS com um certificado proprio. Pra o navegador
-            confiar nesse certificado e aceitar a conexao, instale-o uma vez no
-            seu dispositivo.
-          </p>
-          <p className="bf-modal-platform">Detectado: <strong>{platformLabel}</strong></p>
-          <ol className="bf-modal-steps">
-            {steps[platform].map((s, i) => <li key={i}>{s}</li>)}
-          </ol>
-          <div className="bf-modal-actions">
-            <a className="bf-btn-primary" href={certHref} download="bfmidi.crt">
-              Baixar certificado
-            </a>
-            <button type="button" className="bf-btn-secondary" onClick={onClose}>Fechar</button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // ─── Root ───────────────────────────────────────────────────────────
 function App() {
   const [page, setPage] = useState('preset_config');
   const [saveState, setSaveState] = useState('idle');
   const [deviceState, setDeviceState] = useState('offline');
-  const [certModalOpen, setCertModalOpen] = useState(false);
   // USB transport (Web Serial API). Estados:
   //   'unsupported' (browser nao tem navigator.serial),
   //   'disconnected', 'connecting', 'connected', 'error'.
@@ -1807,12 +1725,12 @@ function App() {
   // ── Modo de conexao WiFi (AP vs STA) ─────────────────────────────────
   // Toggle no header alterna entre 2 hosts fixos. Cada modo aponta o
   // DEVICE_API pro IP correspondente; pingHttp valida automaticamente.
-  //   AP  -> https://192.168.4.1   (conectado direto no AP do pedal)
-  //   STA -> https://bfmidi.local  (mesmo WiFi de casa via mDNS)
-  // O firmware agora serve apenas HTTPS (TLS auto-assinado). Primeira
-  // visita pede aceitar o cert — depois fica salvo no browser.
-  const AP_HOST = 'https://192.168.4.1';
-  const STA_HOST = 'https://bfmidi.local';
+  //   AP  -> http://192.168.4.1   (conectado direto no AP do pedal)
+  //   STA -> http://bfmidi.local  (mesmo WiFi de casa via mDNS)
+  // Quando o webApp roda hospedado dentro do ESP32 (same-origin), esses
+  // hosts ficam ignorados — DEVICE_API fica '' e as chamadas viram relativas.
+  const AP_HOST = 'http://192.168.4.1';
+  const STA_HOST = 'http://bfmidi.local';
   const [connectionMode, setConnectionMode] = useState(() => {
     const saved = (typeof localStorage !== 'undefined' &&
                    localStorage.getItem('bfmidi_connectionMode')) || 'AP';
@@ -2002,10 +1920,7 @@ function App() {
       return false;
     }
     try {
-      const ctrl = new AbortController();
-      const t = setTimeout(() => ctrl.abort(), 2500);
-      const r = await fetch(apiUrl('/config/global'), { signal: ctrl.signal });
-      clearTimeout(t);
+      const r = await queuedFetch(apiUrl('/config/global'), { method: 'GET' }, 3000);
       if (r.ok) {
         setDeviceState('online');
         return true;
@@ -2240,7 +2155,6 @@ function App() {
             onSelectPreset={(n) => selectBank(bankLetterIndex, n)}
             connectionMode={connectionMode}
             onToggleConnectionMode={toggleConnectionMode}
-            onShowCertHelp={() => setCertModalOpen(true)}
             onDisplayNameChange={setBankDisplayName}
             onRegisterPresetSave={registerPresetSave}
           />
@@ -2280,7 +2194,6 @@ function App() {
             ? () => { const h = presetSaveRef.current; if (h && h.save) h.save(); }
             : saveGlobalConfig}
         />
-        <CertInstallModal open={certModalOpen} onClose={() => setCertModalOpen(false)} />
       </div>
     </div>
   );
