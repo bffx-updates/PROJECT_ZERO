@@ -1,0 +1,12 @@
+{
+  "name": "bfmidi-flasher",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build-bundle.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "^0.23.0",
+    "esptool-js": "^0.5.4"
+  }
+}

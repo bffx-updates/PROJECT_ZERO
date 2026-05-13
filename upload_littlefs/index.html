@@ -1,0 +1,469 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#0a0a0c">
+<title>BFMIDI · Atualizar Firmware</title>
+<style>
+  :root {
+    --bg: #0a0a0c;
+    --panel: #14141a;
+    --hair: #2a2a32;
+    --text: #e6e6ee;
+    --muted: #9c9ca6;
+    --accent: #ffd060;
+    --success: #30d158;
+    --danger: #ff6b6b;
+    --font-mono: ui-monospace, 'JetBrains Mono', Menlo, monospace;
+    --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: radial-gradient(circle at 50% -20%, #1f1f28 0%, var(--bg) 60%);
+    color: var(--text);
+    font-family: var(--font-sans);
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--hair);
+    border-radius: 18px;
+    padding: 36px 32px;
+    max-width: 480px;
+    width: 100%;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+  }
+  h1 {
+    font-family: var(--font-mono);
+    font-size: 18px;
+    letter-spacing: 0.16em;
+    margin: 0 0 6px;
+    color: var(--accent);
+  }
+  .subtitle {
+    font-size: 12px;
+    letter-spacing: 0.12em;
+    color: var(--muted);
+    text-transform: uppercase;
+    margin: 0 0 28px;
+  }
+  .field {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 14px;
+    background: rgba(255,255,255,0.02);
+    border: 1px solid var(--hair);
+    border-radius: 10px;
+    margin-bottom: 14px;
+    font-size: 13px;
+    cursor: pointer;
+    user-select: none;
+  }
+  .field input { accent-color: var(--accent); }
+  .field-label { color: var(--text); }
+  .field-hint {
+    color: var(--muted);
+    font-size: 11px;
+    margin-left: auto;
+  }
+  button.primary {
+    appearance: none;
+    border: none;
+    background: var(--accent);
+    color: #0a0a0c;
+    font-family: var(--font-mono);
+    font-size: 13px;
+    letter-spacing: 0.14em;
+    font-weight: 700;
+    padding: 16px;
+    border-radius: 10px;
+    width: 100%;
+    cursor: pointer;
+    transition: filter 0.15s, transform 0.05s;
+  }
+  button.primary:hover:not(:disabled) { filter: brightness(1.08); }
+  button.primary:active:not(:disabled) { transform: translateY(1px); }
+  button.primary:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  button.primary.is-error { background: var(--danger); color: #fff; }
+  button.primary.is-success { background: var(--success); color: #0a0a0c; }
+  button.secondary {
+    appearance: none;
+    background: transparent;
+    color: var(--muted);
+    border: 1px solid var(--hair);
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    cursor: pointer;
+    margin-top: 10px;
+    width: 100%;
+  }
+  button.secondary:hover { color: var(--text); border-color: #4c4c55; }
+  .status {
+    margin-top: 18px;
+    padding: 12px 14px;
+    background: rgba(255,255,255,0.02);
+    border-radius: 8px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--muted);
+    min-height: 38px;
+  }
+  .status.is-progress { color: var(--accent); }
+  .status.is-error    { color: var(--danger); }
+  .status.is-success  { color: var(--success); }
+  .progress-bar {
+    height: 4px;
+    background: var(--hair);
+    border-radius: 2px;
+    overflow: hidden;
+    margin-top: 10px;
+  }
+  .progress-bar > span {
+    display: block;
+    height: 100%;
+    background: var(--accent);
+    width: 0%;
+    transition: width 0.2s linear;
+  }
+  .log {
+    margin-top: 14px;
+    background: #050507;
+    border: 1px solid var(--hair);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--muted);
+    max-height: 220px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+    display: none;
+  }
+  .log.is-visible { display: block; }
+  .footer {
+    margin-top: 16px;
+    font-size: 11px;
+    color: var(--muted);
+    text-align: center;
+  }
+  .footer a { color: var(--muted); }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>BFMIDI · UPDATE</h1>
+    <p class="subtitle">Atualização via cabo USB</p>
+
+    <label class="field">
+      <input type="checkbox" id="flash-firmware" checked>
+      <span class="field-label">Atualizar firmware</span>
+      <span class="field-hint" id="firmware-size">—</span>
+    </label>
+
+    <label class="field">
+      <input type="checkbox" id="flash-littlefs" checked>
+      <span class="field-label">Atualizar webApp (LittleFS)</span>
+      <span class="field-hint" id="littlefs-size">—</span>
+    </label>
+
+    <button id="action" class="primary">Conectar dispositivo</button>
+    <button id="erase" class="secondary" style="display:none">Apagar memória completa</button>
+    <button id="toggle-log" class="secondary">Mostrar logs de debug</button>
+
+    <div id="status" class="status">Aguardando conexão...</div>
+    <div class="progress-bar"><span id="progress"></span></div>
+
+    <pre id="log" class="log"></pre>
+
+    <p class="footer">
+      ESP32-S2 · 921600 baud · Funciona em Chrome/Edge (PC, Mac, Android)
+    </p>
+  </div>
+
+<script type="module">
+import { ESPLoader, Transport } from './esptool-bundle.js';
+
+// ── Imagens da flash ─────────────────────────────────────────────────
+// Offsets vem do partitions.csv do firmware:
+//   0x1000   bootloader
+//   0x8000   partition-table
+//   0x10000  app (firmware)
+//   0x310000 storage (LittleFS, 960 KB)
+const IMAGES = {
+  bootloader:   { path: './bootloader.bin',       offset: 0x1000  },
+  partitions:   { path: './partition-table.bin',  offset: 0x8000  },
+  firmware:     { path: './firmware.bin',         offset: 0x10000 },
+  littlefs:     { path: './littlefs.bin',         offset: 0x310000 },
+};
+
+// ── Filtro USB do ESP32-S2 (VID Espressif) ───────────────────────────
+// PID 0x0002 = ROM bootloader (DFU).
+// PID variavel quando rodando firmware com TinyUSB CDC (no nosso caso
+// "BFMiDi"). So filtramos por VID; o usuario escolhe a porta certa.
+const USB_FILTERS = [{ usbVendorId: 0x303a }];
+
+// ── State ────────────────────────────────────────────────────────────
+const state = {
+  port: null,
+  transport: null,
+  loader: null,
+  step: 'idle', // idle | port_authorized | connected | flashing | done | error
+};
+
+// ── UI helpers ───────────────────────────────────────────────────────
+const $action = document.getElementById('action');
+const $erase = document.getElementById('erase');
+const $toggleLog = document.getElementById('toggle-log');
+const $status = document.getElementById('status');
+const $progress = document.getElementById('progress');
+const $log = document.getElementById('log');
+const $flashFirmware = document.getElementById('flash-firmware');
+const $flashLittlefs = document.getElementById('flash-littlefs');
+const $firmwareSize = document.getElementById('firmware-size');
+const $littlefsSize = document.getElementById('littlefs-size');
+
+function setStatus(msg, variant = '') {
+  $status.textContent = msg;
+  $status.className = 'status' + (variant ? ' is-' + variant : '');
+}
+
+function setActionLabel(label, variant = '') {
+  $action.textContent = label;
+  $action.className = 'primary' + (variant ? ' is-' + variant : '');
+}
+
+function log(line) {
+  const ts = new Date().toISOString().slice(11, 19);
+  $log.textContent += `[${ts}] ${line}\n`;
+  $log.scrollTop = $log.scrollHeight;
+}
+
+function setProgress(pct) {
+  $progress.style.width = Math.max(0, Math.min(100, pct)) + '%';
+}
+
+function formatBytes(n) {
+  if (n < 1024) return n + ' B';
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+  return (n / 1024 / 1024).toFixed(2) + ' MB';
+}
+
+// ── Pre-checa tamanhos dos arquivos (HEAD requests) ─────────────────
+async function probeSizes() {
+  for (const [key, img] of Object.entries(IMAGES)) {
+    try {
+      const r = await fetch(img.path, { method: 'HEAD' });
+      if (!r.ok) {
+        img.missing = true;
+        continue;
+      }
+      const len = parseInt(r.headers.get('Content-Length') || '0', 10);
+      img.size = len;
+      if (key === 'firmware') $firmwareSize.textContent = formatBytes(len);
+      if (key === 'littlefs') $littlefsSize.textContent = formatBytes(len);
+    } catch {
+      img.missing = true;
+    }
+  }
+  if (IMAGES.firmware.missing) {
+    $firmwareSize.textContent = 'arquivo ausente';
+    $flashFirmware.checked = false;
+    $flashFirmware.disabled = true;
+  }
+  if (IMAGES.littlefs.missing) {
+    $littlefsSize.textContent = 'arquivo ausente';
+    $flashLittlefs.checked = false;
+    $flashLittlefs.disabled = true;
+  }
+}
+
+// ── Carrega .bin como ArrayBuffer ────────────────────────────────────
+async function loadBin(path) {
+  const r = await fetch(path);
+  if (!r.ok) throw new Error(`falha ao carregar ${path}: ${r.status}`);
+  return new Uint8Array(await r.arrayBuffer());
+}
+
+// ── ArrayBuffer -> string binaria (esptool-js espera assim) ──────────
+function ab2bstr(uint8) {
+  let s = '';
+  const CHUNK = 0x8000;
+  for (let i = 0; i < uint8.length; i += CHUNK) {
+    s += String.fromCharCode.apply(null, uint8.subarray(i, i + CHUNK));
+  }
+  return s;
+}
+
+// ── Conectar via Web Serial ──────────────────────────────────────────
+async function connect() {
+  if (!('serial' in navigator)) {
+    setStatus('Web Serial nao suportado. Use Chrome ou Edge.', 'error');
+    return;
+  }
+  setStatus('Selecione a porta serial do BFMIDI...', 'progress');
+  setActionLabel('Autorizar conexao');
+  try {
+    state.port = await navigator.serial.requestPort({ filters: USB_FILTERS });
+  } catch {
+    setStatus('Nenhuma porta selecionada.', 'error');
+    setActionLabel('Conectar dispositivo');
+    return;
+  }
+  state.step = 'port_authorized';
+  setStatus('Porta autorizada. Pronto pra atualizar.', '');
+  setActionLabel('Iniciar atualizacao');
+  $erase.style.display = 'block';
+}
+
+// ── Esptool: abrir transport + ESPLoader ─────────────────────────────
+async function openLoader() {
+  state.transport = new Transport(state.port, true);
+  state.loader = new ESPLoader({
+    transport: state.transport,
+    baudrate: 921600,
+    romBaudrate: 115200,
+    terminal: {
+      clean: () => { /* nop */ },
+      writeLine: (s) => log(s),
+      write: (s) => { /* esptool spam via writeLine */ },
+    },
+  });
+  const chip = await state.loader.main();
+  log('Chip detectado: ' + chip);
+}
+
+// ── Fluxo principal de update ────────────────────────────────────────
+async function startUpdate() {
+  state.step = 'flashing';
+  $action.disabled = true;
+  $erase.style.display = 'none';
+  setStatus('Conectando ao chip...', 'progress');
+  setProgress(0);
+
+  try {
+    await openLoader();
+
+    // Monta lista de imagens a flashar conforme checkboxes
+    const queue = [];
+    if ($flashFirmware.checked) {
+      queue.push(IMAGES.bootloader);
+      queue.push(IMAGES.partitions);
+      queue.push(IMAGES.firmware);
+    }
+    if ($flashLittlefs.checked) {
+      queue.push(IMAGES.littlefs);
+    }
+    if (queue.length === 0) {
+      throw new Error('Nada selecionado pra atualizar');
+    }
+
+    // Carrega bytes de cada imagem
+    setStatus('Carregando imagens...', 'progress');
+    const fileArray = [];
+    for (const img of queue) {
+      const data = await loadBin(img.path);
+      fileArray.push({ data: ab2bstr(data), address: img.offset });
+      log(`${img.path} : ${formatBytes(data.length)} @ 0x${img.offset.toString(16)}`);
+    }
+
+    setStatus('Gravando flash (nao desconecte o cabo)...', 'progress');
+    await state.loader.writeFlash({
+      fileArray,
+      flashSize: 'keep',
+      flashMode: 'keep',
+      flashFreq: 'keep',
+      eraseAll: false,
+      compress: true,
+      reportProgress: (fileIndex, written, total) => {
+        const overallPct = ((fileIndex + written / total) / fileArray.length) * 100;
+        setProgress(overallPct);
+      },
+      calculateMD5Hash: null, // pular MD5 pra ser mais rapido; ESP-IDF ja valida
+    });
+
+    setStatus('Resetando dispositivo...', 'progress');
+    await state.loader.after();
+    setProgress(100);
+    setStatus('Atualizado com sucesso! O BFMIDI vai reiniciar.', 'success');
+    setActionLabel('Atualizado com sucesso', 'success');
+    state.step = 'done';
+  } catch (e) {
+    console.error(e);
+    log('ERRO: ' + (e?.message || e));
+    setStatus('Falha: ' + (e?.message || 'erro desconhecido'), 'error');
+    setActionLabel('Tentar novamente', 'error');
+    state.step = 'error';
+    $action.disabled = false;
+  } finally {
+    try { await state.transport?.disconnect(); } catch {}
+    state.transport = null;
+    state.loader = null;
+  }
+}
+
+// ── Apagar flash completa ────────────────────────────────────────────
+async function eraseAll() {
+  if (!confirm('Apagar TODA a memoria flash do BFMIDI? Isso remove o firmware e todos os presets.')) return;
+  $action.disabled = true;
+  $erase.disabled = true;
+  setStatus('Conectando ao chip...', 'progress');
+  try {
+    await openLoader();
+    setStatus('Apagando flash inteira (~30s)...', 'progress');
+    await state.loader.eraseFlash();
+    setStatus('Flash apagada. Faca um update completo agora.', 'success');
+  } catch (e) {
+    log('ERRO erase: ' + (e?.message || e));
+    setStatus('Falha ao apagar: ' + (e?.message || 'erro'), 'error');
+  } finally {
+    try { await state.transport?.disconnect(); } catch {}
+    state.transport = null;
+    state.loader = null;
+    $action.disabled = false;
+    $erase.disabled = false;
+  }
+}
+
+// ── Handlers ─────────────────────────────────────────────────────────
+$action.addEventListener('click', () => {
+  if (state.step === 'idle' || state.step === 'error' || state.step === 'done') {
+    if (!state.port) {
+      connect();
+    } else {
+      startUpdate();
+    }
+  } else if (state.step === 'port_authorized') {
+    startUpdate();
+  }
+});
+
+$erase.addEventListener('click', eraseAll);
+
+$toggleLog.addEventListener('click', () => {
+  const visible = $log.classList.toggle('is-visible');
+  $toggleLog.textContent = visible ? 'Ocultar logs de debug' : 'Mostrar logs de debug';
+});
+
+// ── Init ─────────────────────────────────────────────────────────────
+probeSizes();
+if (!('serial' in navigator)) {
+  setStatus('Web Serial nao suportado. Use Chrome ou Edge no PC, Mac ou Android.', 'error');
+  $action.disabled = true;
+}
+</script>
+</body>
+</html>
