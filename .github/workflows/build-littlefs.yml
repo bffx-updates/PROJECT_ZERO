@@ -18,6 +18,12 @@ on:
 permissions:
   contents: write
 
+# Forca as actions JS a rodarem no Node 24 (default ate jun/2026 ainda
+# e Node 20, mas ja emite warning de deprecation). Remover depois que
+# checkout@v5/setup-node@v5 sairem com Node 24 embutido.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   build:
     runs-on: ubuntu-latest
