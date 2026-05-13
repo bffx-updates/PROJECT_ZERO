@@ -1,0 +1,78 @@
+name: build-littlefs
+
+# Dispara quando algo em webApp/ muda. Bundla o webApp via esbuild+preact,
+# gera a imagem LittleFS (mklittlefs binario do release oficial) e commita
+# data/ + upload_littlefs/littlefs.bin de volta no main.
+#
+# Pushes do GITHUB_TOKEN nao retriggam workflows (politica do GitHub
+# Actions), entao nao tem loop infinito.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'webApp/**'
+      - '.github/workflows/build-littlefs.yml'
+  workflow_dispatch: {}  # permite rodar manual pelo botao da Actions
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Token com permissao de push (default GITHUB_TOKEN ja basta).
+          token: ${{ secrets.GITHUB_TOKEN }}
+          # Necessario pra permitir push de volta a partir do CI.
+          persist-credentials: true
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build webApp
+        working-directory: webApp
+        run: |
+          npm install --no-audit --no-fund
+          npm run build
+
+      - name: Download mklittlefs
+        run: |
+          set -e
+          URL="https://github.com/earlephilhower/mklittlefs/releases/download/4.0.2/x86_64-linux-gnu-mklittlefs-4.0.2.tar.gz"
+          curl -fsSL -o mklittlefs.tar.gz "$URL"
+          tar -xzf mklittlefs.tar.gz
+          rm mklittlefs.tar.gz
+          # O tarball extrai num diretorio tipo "mklittlefs/" — pega o binario.
+          BIN=$(find . -maxdepth 3 -type f -name 'mklittlefs' | head -n1)
+          if [ -z "$BIN" ]; then
+            echo "mklittlefs nao encontrado no tarball"
+            ls -la
+            exit 1
+          fi
+          chmod +x "$BIN"
+          mv "$BIN" /usr/local/bin/mklittlefs
+          mklittlefs --version || true
+
+      - name: Generate littlefs.bin
+        run: |
+          mkdir -p upload_littlefs
+          mklittlefs -c data -b 4096 -p 256 -s 0xF0000 upload_littlefs/littlefs.bin
+          ls -la upload_littlefs/littlefs.bin
+
+      - name: Commit artifacts
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/index.html data/app.js data/app.css upload_littlefs/littlefs.bin
+          if git diff --staged --quiet; then
+            echo "Nenhuma mudanca para commitar."
+          else
+            git commit -m "ci: rebuild webApp bundle + littlefs.bin"
+            git push
+          fi
