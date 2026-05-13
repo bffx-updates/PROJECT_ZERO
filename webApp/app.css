@@ -1377,7 +1377,8 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
 }
 .bf-preset-tabs {
   display: flex;
-  gap: 10px;
+  gap: 8px;
+  flex-wrap: nowrap;
 }
 .bf-preset-tab {
   appearance: none;
@@ -1385,20 +1386,22 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
   background: transparent;
   color: var(--text);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
-  letter-spacing: 0.16em;
-  padding: 10px 14px 8px;
+  letter-spacing: 0.12em;
+  padding: 8px 10px 6px;
   border-radius: 14px;
   cursor: pointer;
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
   gap: 4px;
-  min-width: 90px;
+  flex: 1 1 0;
+  min-width: 0;
   transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
 }
-.bf-tab-ico { width: 44px; height: 44px; display: block; }
+.bf-tab-ico { width: 36px; height: 36px; display: block; flex: 0 0 auto; }
 .bf-tab-shape { fill: none; stroke: currentColor; stroke-width: 1.8; }
 .bf-tab-dot   { fill: currentColor; }
 .bf-tab-line  { fill: none; stroke: currentColor; stroke-width: 1.8; }
