@@ -1112,9 +1112,6 @@ function PagePresetConfig({
             }
           >
             <span className="bf-conn-mode-label">{connectionMode || 'AP'}</span>
-            <span className="bf-conn-mode-sub">
-              {connectionMode === 'STA' ? 'bfmidi.local' : '192.168.4.1'}
-            </span>
           </button>
 
           <button
