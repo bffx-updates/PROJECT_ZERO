@@ -90,11 +90,8 @@
   }
   button.primary:hover:not(:disabled) { filter: brightness(1.08); }
   button.primary:active:not(:disabled) { transform: translateY(1px); }
-  button.primary:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-  button.primary.is-error { background: var(--danger); color: #fff; }
+  button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
+  button.primary.is-error   { background: var(--danger); color: #fff; }
   button.primary.is-success { background: var(--success); color: #0a0a0c; }
   button.secondary {
     appearance: none;
@@ -160,7 +157,6 @@
     color: var(--muted);
     text-align: center;
   }
-  .footer a { color: var(--muted); }
 </style>
 </head>
 <body>
@@ -190,7 +186,7 @@
     <pre id="log" class="log"></pre>
 
     <p class="footer">
-      ESP32-S2 · 921600 baud · Funciona em Chrome/Edge (PC, Mac, Android)
+      ESP32-S2 · 115200 baud · Funciona em Chrome/Edge (PC, Mac, Android)
     </p>
   </div>
 
@@ -204,180 +200,341 @@ import { ESPLoader, Transport } from './esptool-bundle.js';
 //   0x10000  app (firmware)
 //   0x310000 storage (LittleFS, 960 KB)
 const IMAGES = {
-  bootloader:   { path: './bootloader.bin',       offset: 0x1000  },
-  partitions:   { path: './partition-table.bin',  offset: 0x8000  },
-  firmware:     { path: './firmware.bin',         offset: 0x10000 },
-  littlefs:     { path: './littlefs.bin',         offset: 0x310000 },
+  bootloader: { path: './bootloader.bin',      address: 0x1000 },
+  partitions: { path: './partition-table.bin', address: 0x8000 },
+  firmware:   { path: './firmware.bin',        address: 0x10000 },
+  littlefs:   { path: './littlefs.bin',        address: 0x310000 },
 };
 
-// ── Filtro USB do ESP32-S2 (VID Espressif) ───────────────────────────
-// PID 0x0002 = ROM bootloader (DFU).
-// PID variavel quando rodando firmware com TinyUSB CDC (no nosso caso
-// "BFMiDi"). So filtramos por VID; o usuario escolhe a porta certa.
-const USB_FILTERS = [{ usbVendorId: 0x303a }];
+// ── Filtros USB ─────────────────────────────────────────────────────
+// Multiplas combinacoes pra cobrir:
+//   - 0x80c2: ESP32-S2 rodando firmware com TinyUSB CDC (BFMiDi)
+//   - 0x0002: ESP32-S2 ROM bootloader (download mode)
+//   - VID-only fallback (libera qualquer placa Espressif)
+const USB_FILTERS = [
+  { usbVendorId: 0x303a, usbProductId: 0x80c2 },
+  { usbVendorId: 0x303a, usbProductId: 0x0002 },
+  { usbVendorId: 0x303a },
+];
 
 // ── State ────────────────────────────────────────────────────────────
 const state = {
   port: null,
   transport: null,
   loader: null,
-  step: 'idle', // idle | port_authorized | connected | flashing | done | error
+  lastPortInfo: null,
+  step: 'idle', // idle | awaiting_port | connected | flashing | done | error
 };
 
 // ── UI helpers ───────────────────────────────────────────────────────
-const $action = document.getElementById('action');
-const $erase = document.getElementById('erase');
-const $toggleLog = document.getElementById('toggle-log');
-const $status = document.getElementById('status');
-const $progress = document.getElementById('progress');
-const $log = document.getElementById('log');
-const $flashFirmware = document.getElementById('flash-firmware');
-const $flashLittlefs = document.getElementById('flash-littlefs');
+const $action       = document.getElementById('action');
+const $erase        = document.getElementById('erase');
+const $toggleLog    = document.getElementById('toggle-log');
+const $status       = document.getElementById('status');
+const $progress     = document.getElementById('progress');
+const $log          = document.getElementById('log');
+const $flashFw      = document.getElementById('flash-firmware');
+const $flashFs      = document.getElementById('flash-littlefs');
 const $firmwareSize = document.getElementById('firmware-size');
 const $littlefsSize = document.getElementById('littlefs-size');
+
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 function setStatus(msg, variant = '') {
   $status.textContent = msg;
   $status.className = 'status' + (variant ? ' is-' + variant : '');
 }
-
 function setActionLabel(label, variant = '') {
   $action.textContent = label;
   $action.className = 'primary' + (variant ? ' is-' + variant : '');
 }
-
-function log(line) {
-  const ts = new Date().toISOString().slice(11, 19);
-  $log.textContent += `[${ts}] ${line}\n`;
+function log(msg) {
+  const ts = new Date().toLocaleTimeString();
+  $log.textContent += `[${ts}] ${msg}\n`;
   $log.scrollTop = $log.scrollHeight;
+  console.log(msg);
 }
-
 function setProgress(pct) {
   $progress.style.width = Math.max(0, Math.min(100, pct)) + '%';
 }
-
 function formatBytes(n) {
   if (n < 1024) return n + ' B';
   if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
   return (n / 1024 / 1024).toFixed(2) + ' MB';
 }
 
-// ── Pre-checa tamanhos dos arquivos (HEAD requests) ─────────────────
+// ── Probe sizes (HEAD requests) ─────────────────────────────────────
 async function probeSizes() {
   for (const [key, img] of Object.entries(IMAGES)) {
     try {
       const r = await fetch(img.path, { method: 'HEAD' });
-      if (!r.ok) {
-        img.missing = true;
-        continue;
-      }
-      const len = parseInt(r.headers.get('Content-Length') || '0', 10);
-      img.size = len;
-      if (key === 'firmware') $firmwareSize.textContent = formatBytes(len);
-      if (key === 'littlefs') $littlefsSize.textContent = formatBytes(len);
-    } catch {
-      img.missing = true;
-    }
+      if (!r.ok) { img.missing = true; continue; }
+      img.size = parseInt(r.headers.get('Content-Length') || '0', 10);
+      if (key === 'firmware') $firmwareSize.textContent = formatBytes(img.size);
+      if (key === 'littlefs') $littlefsSize.textContent = formatBytes(img.size);
+    } catch { img.missing = true; }
   }
   if (IMAGES.firmware.missing) {
     $firmwareSize.textContent = 'arquivo ausente';
-    $flashFirmware.checked = false;
-    $flashFirmware.disabled = true;
+    $flashFw.checked = false; $flashFw.disabled = true;
   }
   if (IMAGES.littlefs.missing) {
     $littlefsSize.textContent = 'arquivo ausente';
-    $flashLittlefs.checked = false;
-    $flashLittlefs.disabled = true;
+    $flashFs.checked = false; $flashFs.disabled = true;
   }
 }
 
-// ── Carrega .bin como ArrayBuffer ────────────────────────────────────
-async function loadBin(path) {
-  const r = await fetch(path);
-  if (!r.ok) throw new Error(`falha ao carregar ${path}: ${r.status}`);
-  return new Uint8Array(await r.arrayBuffer());
+// ── Wrappers de signals — engole erros do setDTR/setRTS ──────────────
+// ESP32-S2/S3 com USB CDC nativo nao tem linhas de controle reais; o
+// setSignals do navegador pode retornar erro mesmo funcionando. Sem o
+// wrap, qualquer erro aborta o fluxo.
+function wrapSignals(t) {
+  const wrap = (fn) => async (val) => {
+    try { return await fn.call(t, val); }
+    catch (err) { log('Signal warning: ' + err.message); }
+  };
+  if (t?.setDTR) t.setDTR = wrap(t.setDTR);
+  if (t?.setRTS) t.setRTS = wrap(t.setRTS);
+  return t;
 }
 
+async function closeTransportSafe(t) {
+  if (!t) return;
+  try { await t.disconnect(); } catch {}
+  try { await t.waitForUnlock?.(200); } catch {}
+}
+
+// ── Pulso DTR/RTS pra colocar ESP32-S2 em modo download ──────────────
+// EN=RTS (reset), GPIO0=DTR (boot mode).
+async function pulseBootMode(t) {
+  log('Enviando pulso boot/reset...');
+  await t.setRTS?.(true);  // EN low (reset)
+  await t.setDTR?.(true);  // GPIO0 low (boot mode)
+  await sleep(100);
+  await t.setRTS?.(false); // EN high (sai do reset)
+  await sleep(50);
+  await t.setDTR?.(false); // GPIO0 high
+  await sleep(50);
+  log('Pulso enviado.');
+}
+
+// ── Reconecta apos re-enumeracao USB ────────────────────────────────
+async function waitForReconnect(timeoutMs = 15000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const ports = await navigator.serial.getPorts();
+    const match = ports.find(p => {
+      const info = p.getInfo();
+      return info.usbVendorId === state.lastPortInfo?.usbVendorId;
+    });
+    if (match) {
+      state.port = match;
+      const info = match.getInfo();
+      state.lastPortInfo = { usbVendorId: info.usbVendorId, usbProductId: info.usbProductId };
+      log(`Reconectado: VID=0x${info.usbVendorId.toString(16)} PID=0x${info.usbProductId.toString(16)}`);
+      return match;
+    }
+    await sleep(250);
+  }
+  throw new Error('Timeout aguardando reconexao do dispositivo.');
+}
+
+// ── Acquire port (auto-detect primeiro, dialogo depois) ──────────────
+async function acquirePort() {
+  if (!('serial' in navigator)) {
+    throw new Error('Navegador incompativel. Use Chrome ou Edge no PC/Mac/Android.');
+  }
+
+  // Tenta dispositivo ja autorizado
+  try {
+    const ports = await navigator.serial.getPorts();
+    const match = ports.find(p => {
+      const info = p.getInfo();
+      return USB_FILTERS.some(f =>
+        f.usbVendorId === info.usbVendorId &&
+        (!f.usbProductId || f.usbProductId === info.usbProductId)
+      );
+    });
+    if (match) {
+      state.port = match;
+      const info = match.getInfo();
+      state.lastPortInfo = { usbVendorId: info.usbVendorId, usbProductId: info.usbProductId };
+      log(`Dispositivo ja autorizado: VID=0x${info.usbVendorId.toString(16)} PID=0x${info.usbProductId.toString(16)}`);
+      return match;
+    }
+  } catch (e) {
+    log('Auto-detect falhou: ' + e.message);
+  }
+
+  // Dialogo
+  log('Solicitando porta serial...');
+  const filters = state.lastPortInfo
+    ? [{ usbVendorId: state.lastPortInfo.usbVendorId }]
+    : USB_FILTERS;
+  try {
+    state.port = await navigator.serial.requestPort({ filters });
+    const info = state.port.getInfo();
+    state.lastPortInfo = { usbVendorId: info.usbVendorId, usbProductId: info.usbProductId };
+    return state.port;
+  } catch (err) {
+    if (err.name === 'NotFoundError') return null; // user cancelled
+    throw err;
+  }
+}
+
+// ── Esp-loader terminal sink ────────────────────────────────────────
+const espTerminal = {
+  clean() {},
+  writeLine(s) { log(s); },
+  write(s)     { log(s); },
+};
+
 // ── ArrayBuffer -> string binaria (esptool-js espera assim) ──────────
-function ab2bstr(uint8) {
+async function fetchBinaryString(path) {
+  const r = await fetch(path);
+  if (!r.ok) throw new Error('Arquivo nao encontrado: ' + path);
+  const buf = new Uint8Array(await r.arrayBuffer());
   let s = '';
-  const CHUNK = 0x8000;
-  for (let i = 0; i < uint8.length; i += CHUNK) {
-    s += String.fromCharCode.apply(null, uint8.subarray(i, i + CHUNK));
+  for (let i = 0; i < buf.length; i += 0x8000) {
+    s += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
   }
   return s;
 }
 
-// ── Conectar via Web Serial ──────────────────────────────────────────
-async function connect() {
-  if (!('serial' in navigator)) {
-    setStatus('Web Serial nao suportado. Use Chrome ou Edge.', 'error');
-    return;
-  }
-  setStatus('Selecione a porta serial do BFMIDI...', 'progress');
-  setActionLabel('Autorizar conexao');
+// ── Conectar (pulso boot + ESPLoader.main) ──────────────────────────
+async function handleConnect() {
   try {
-    state.port = await navigator.serial.requestPort({ filters: USB_FILTERS });
-  } catch {
-    setStatus('Nenhuma porta selecionada.', 'error');
-    setActionLabel('Conectar dispositivo');
-    return;
+    state.step = 'awaiting_port';
+    setStatus('Selecione a porta do BFMIDI...', 'progress');
+    setActionLabel('Autorizar conexao');
+
+    const dev = await acquirePort();
+    if (!dev) {
+      setStatus('Nenhuma porta selecionada.', '');
+      setActionLabel('Conectar dispositivo');
+      state.step = 'idle';
+      return;
+    }
+
+    $action.disabled = true;
+    setStatus('Preparando dispositivo...', 'progress');
+    await sleep(300);
+
+    const isBootloader = state.lastPortInfo?.usbProductId === 0x0002;
+
+    // Se nao esta em bootloader, manda pulso pra entrar em modo download.
+    if (!isBootloader) {
+      let pre = null;
+      try {
+        pre = wrapSignals(new Transport(state.port, true));
+        await pre.connect(115200);
+        await pulseBootMode(pre);
+      } catch (e) {
+        log('Aviso no pulso boot: ' + e.message);
+      } finally {
+        await closeTransportSafe(pre);
+      }
+
+      setStatus('Reiniciando em modo download...', 'progress');
+      log('Aguardando re-enumeracao USB...');
+      await sleep(2000);
+
+      // ESP32-S2 muda de PID ao entrar no bootloader — browser ve como
+      // dispositivo novo. Tenta reconectar rapido (3s); se nao achar,
+      // pede o usuario re-autorizar.
+      try {
+        await waitForReconnect(3000);
+      } catch {
+        log('Bootloader em PID novo — pedindo autorizacao novamente');
+        state.port = null;
+        state.lastPortInfo = null;
+      }
+    }
+
+    if (!state.port) {
+      setStatus('Clique para confirmar a nova porta...', 'progress');
+      setActionLabel('Autorizar conexao');
+      $action.disabled = false;
+      state.step = 'awaiting_port';
+      return;
+    }
+
+    log('Aguardando estabilizacao da porta...');
+    await sleep(1000);
+
+    // Retry com ate 3 tentativas (alguns chips dao "invalid response" na 1a)
+    const MAX_RETRIES = 3;
+    let connected = false;
+    let lastError = null;
+
+    for (let attempt = 1; attempt <= MAX_RETRIES && !connected; attempt++) {
+      try {
+        log(`Tentativa ${attempt}/${MAX_RETRIES}...`);
+        await closeTransportSafe(state.transport);
+        state.transport = wrapSignals(new Transport(state.port, true));
+        state.loader = new ESPLoader({
+          transport: state.transport,
+          baudrate: 115200,
+          romBaudrate: 115200,
+          terminal: espTerminal,
+        });
+        await state.loader.main('no_reset');
+        connected = true;
+        log('Conexao estabelecida!');
+      } catch (err) {
+        lastError = err;
+        log(`Tentativa ${attempt} falhou: ${err.message}`);
+        await closeTransportSafe(state.transport);
+        state.transport = null;
+        state.loader = null;
+        if (attempt < MAX_RETRIES) await sleep(1000 * attempt);
+      }
+    }
+
+    if (!connected) throw lastError || new Error('Falha apos retries');
+
+    state.step = 'connected';
+    setStatus('Dispositivo pronto. Clique pra atualizar.', '');
+    setActionLabel('Iniciar atualizacao');
+    $action.disabled = false;
+    $erase.style.display = 'block';
+
+  } catch (e) {
+    log('Erro: ' + e.message);
+    setStatus('Falha: ' + e.message, 'error');
+    setActionLabel('Tentar novamente', 'error');
+    state.step = 'error';
+    $action.disabled = false;
+    await closeTransportSafe(state.transport);
+    state.transport = null;
+    state.loader = null;
   }
-  state.step = 'port_authorized';
-  setStatus('Porta autorizada. Pronto pra atualizar.', '');
-  setActionLabel('Iniciar atualizacao');
-  $erase.style.display = 'block';
 }
 
-// ── Esptool: abrir transport + ESPLoader ─────────────────────────────
-async function openLoader() {
-  state.transport = new Transport(state.port, true);
-  state.loader = new ESPLoader({
-    transport: state.transport,
-    baudrate: 921600,
-    romBaudrate: 115200,
-    terminal: {
-      clean: () => { /* nop */ },
-      writeLine: (s) => log(s),
-      write: (s) => { /* esptool spam via writeLine */ },
-    },
-  });
-  const chip = await state.loader.main();
-  log('Chip detectado: ' + chip);
-}
-
-// ── Fluxo principal de update ────────────────────────────────────────
-async function startUpdate() {
+// ── Flash ───────────────────────────────────────────────────────────
+async function handleFlash() {
+  if (!state.loader) return;
   state.step = 'flashing';
   $action.disabled = true;
   $erase.style.display = 'none';
-  setStatus('Conectando ao chip...', 'progress');
   setProgress(0);
 
   try {
-    await openLoader();
-
-    // Monta lista de imagens a flashar conforme checkboxes
     const queue = [];
-    if ($flashFirmware.checked) {
-      queue.push(IMAGES.bootloader);
-      queue.push(IMAGES.partitions);
-      queue.push(IMAGES.firmware);
+    if ($flashFw.checked) {
+      queue.push(IMAGES.bootloader, IMAGES.partitions, IMAGES.firmware);
     }
-    if ($flashLittlefs.checked) {
+    if ($flashFs.checked) {
       queue.push(IMAGES.littlefs);
     }
-    if (queue.length === 0) {
-      throw new Error('Nada selecionado pra atualizar');
-    }
+    if (!queue.length) throw new Error('Nada selecionado pra atualizar');
 
-    // Carrega bytes de cada imagem
     setStatus('Carregando imagens...', 'progress');
     const fileArray = [];
     for (const img of queue) {
-      const data = await loadBin(img.path);
-      fileArray.push({ data: ab2bstr(data), address: img.offset });
-      log(`${img.path} : ${formatBytes(data.length)} @ 0x${img.offset.toString(16)}`);
+      log(`Carregando ${img.path}...`);
+      const data = await fetchBinaryString(img.path);
+      fileArray.push({ data, address: img.address });
     }
 
     setStatus('Gravando flash (nao desconecte o cabo)...', 'progress');
@@ -388,82 +545,85 @@ async function startUpdate() {
       flashFreq: 'keep',
       eraseAll: false,
       compress: true,
-      reportProgress: (fileIndex, written, total) => {
-        const overallPct = ((fileIndex + written / total) / fileArray.length) * 100;
-        setProgress(overallPct);
+      reportProgress: (idx, written, total) => {
+        const pct = Math.floor((written / total) * 100);
+        setProgress(pct);
+        setStatus(`Gravando arquivo ${idx + 1}/${fileArray.length} (${pct}%)...`, 'progress');
       },
-      calculateMD5Hash: null, // pular MD5 pra ser mais rapido; ESP-IDF ja valida
+      calculateMD5Hash: (image) => CryptoJS.MD5(CryptoJS.enc.Latin1.parse(image)),
     });
 
     setStatus('Resetando dispositivo...', 'progress');
-    await state.loader.after();
+    try { await state.loader.after(); } catch (e) { log('after() warning: ' + e.message); }
+    try { await state.loader.hardReset(); } catch (e) { log('hardReset warning: ' + e.message); }
+
     setProgress(100);
     setStatus('Atualizado com sucesso! O BFMIDI vai reiniciar.', 'success');
     setActionLabel('Atualizado com sucesso', 'success');
     state.step = 'done';
+
   } catch (e) {
-    console.error(e);
-    log('ERRO: ' + (e?.message || e));
-    setStatus('Falha: ' + (e?.message || 'erro desconhecido'), 'error');
+    log('Erro: ' + e.message);
+    setStatus('Falha: ' + e.message, 'error');
     setActionLabel('Tentar novamente', 'error');
     state.step = 'error';
     $action.disabled = false;
   } finally {
-    try { await state.transport?.disconnect(); } catch {}
+    await closeTransportSafe(state.transport);
     state.transport = null;
     state.loader = null;
   }
 }
 
-// ── Apagar flash completa ────────────────────────────────────────────
-async function eraseAll() {
-  if (!confirm('Apagar TODA a memoria flash do BFMIDI? Isso remove o firmware e todos os presets.')) return;
+// ── Erase total ─────────────────────────────────────────────────────
+async function handleErase() {
+  if (!confirm('Apagar TODA a memoria flash do BFMIDI? Isso remove firmware e presets.')) return;
   $action.disabled = true;
   $erase.disabled = true;
-  setStatus('Conectando ao chip...', 'progress');
   try {
-    await openLoader();
     setStatus('Apagando flash inteira (~30s)...', 'progress');
-    await state.loader.eraseFlash();
-    setStatus('Flash apagada. Faca um update completo agora.', 'success');
+    if (state.loader) {
+      await state.loader.eraseFlash();
+      setStatus('Flash apagada. Faca um update completo agora.', 'success');
+    } else {
+      throw new Error('Conecte o dispositivo primeiro');
+    }
   } catch (e) {
-    log('ERRO erase: ' + (e?.message || e));
-    setStatus('Falha ao apagar: ' + (e?.message || 'erro'), 'error');
+    log('Erro erase: ' + e.message);
+    setStatus('Falha ao apagar: ' + e.message, 'error');
   } finally {
-    try { await state.transport?.disconnect(); } catch {}
-    state.transport = null;
-    state.loader = null;
     $action.disabled = false;
     $erase.disabled = false;
   }
 }
 
-// ── Handlers ─────────────────────────────────────────────────────────
+// ── Wire up ─────────────────────────────────────────────────────────
 $action.addEventListener('click', () => {
-  if (state.step === 'idle' || state.step === 'error' || state.step === 'done') {
-    if (!state.port) {
-      connect();
-    } else {
-      startUpdate();
-    }
-  } else if (state.step === 'port_authorized') {
-    startUpdate();
+  if (state.step === 'idle' || state.step === 'error' || state.step === 'awaiting_port') {
+    handleConnect();
+  } else if (state.step === 'connected') {
+    handleFlash();
+  } else if (state.step === 'done') {
+    location.reload();
   }
 });
 
-$erase.addEventListener('click', eraseAll);
+$erase.addEventListener('click', handleErase);
 
 $toggleLog.addEventListener('click', () => {
   const visible = $log.classList.toggle('is-visible');
   $toggleLog.textContent = visible ? 'Ocultar logs de debug' : 'Mostrar logs de debug';
 });
 
-// ── Init ─────────────────────────────────────────────────────────────
+// ── Init ────────────────────────────────────────────────────────────
 probeSizes();
 if (!('serial' in navigator)) {
-  setStatus('Web Serial nao suportado. Use Chrome ou Edge no PC, Mac ou Android.', 'error');
+  setStatus('Web Serial nao suportado. Use Chrome ou Edge no PC/Mac/Android.', 'error');
   $action.disabled = true;
 }
 </script>
+
+<!-- CryptoJS pra MD5 (esptool-js usa pra verificar integridade) -->
+<script src="https://cdn.jsdelivr.net/npm/crypto-js@4.1.1/crypto-js.js"></script>
 </body>
 </html>
