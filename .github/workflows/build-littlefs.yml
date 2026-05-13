@@ -77,14 +77,16 @@ jobs:
           mklittlefs -c data -b 4096 -p 256 -s 0xF0000 upload_littlefs/littlefs.bin
           ls -la upload_littlefs/littlefs.bin
 
-      - name: Commit artifacts
+      - name: Commit littlefs.bin
         run: |
+          # So commitamos o litttlefs.bin. data/ continua gitignored
+          # propositalmente (e regeravel localmente via `npm run build`).
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/index.html data/app.js data/app.css upload_littlefs/littlefs.bin
+          git add upload_littlefs/littlefs.bin
           if git diff --staged --quiet; then
-            echo "Nenhuma mudanca para commitar."
+            echo "littlefs.bin nao mudou."
           else
-            git commit -m "ci: rebuild webApp bundle + littlefs.bin"
+            git commit -m "ci: rebuild littlefs.bin (webApp atualizado)"
             git push
           fi
