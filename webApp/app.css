@@ -1366,7 +1366,7 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
 }
 .bf-preset-card-title {
   font-family: var(--font-display);
-  font-size: 30px;
+  font-size: 22px;
   font-weight: 800;
   line-height: 0.95;
   letter-spacing: -0.02em;
