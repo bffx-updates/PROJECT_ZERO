@@ -44,20 +44,32 @@ jobs:
       - name: Download mklittlefs
         run: |
           set -e
-          URL="https://github.com/earlephilhower/mklittlefs/releases/download/4.0.2/x86_64-linux-gnu-mklittlefs-4.0.2.tar.gz"
-          curl -fsSL -o mklittlefs.tar.gz "$URL"
+          # Releases do earlephilhower/mklittlefs tem o commit hash no nome
+          # do asset (ex: x86_64-linux-gnu-mklittlefs-42acb97.tar.gz). Em vez
+          # de fixar a URL e quebrar quando sair versao nova, perguntamos pra
+          # API do GitHub qual e o asset Linux x86_64 do release "latest".
+          ASSET_URL=$(curl -fsSL https://api.github.com/repos/earlephilhower/mklittlefs/releases/latest \
+            | grep -oE '"browser_download_url":\s*"[^"]*x86_64-linux-gnu[^"]*\.tar\.gz"' \
+            | head -n1 \
+            | sed -E 's/.*"(https[^"]+)"/\1/')
+          if [ -z "$ASSET_URL" ]; then
+            echo "Nao achei asset linux x86_64 no release mais recente"
+            exit 1
+          fi
+          echo "Baixando: $ASSET_URL"
+          curl -fsSL -o mklittlefs.tar.gz "$ASSET_URL"
           tar -xzf mklittlefs.tar.gz
           rm mklittlefs.tar.gz
-          # O tarball extrai num diretorio tipo "mklittlefs/" — pega o binario.
+          # Extrai pra mklittlefs/mklittlefs (estrutura confirmada do release).
           BIN=$(find . -maxdepth 3 -type f -name 'mklittlefs' | head -n1)
           if [ -z "$BIN" ]; then
-            echo "mklittlefs nao encontrado no tarball"
-            ls -la
+            echo "Binario mklittlefs nao encontrado no tarball"
+            find . -maxdepth 3 -type f -print
             exit 1
           fi
           chmod +x "$BIN"
-          mv "$BIN" /usr/local/bin/mklittlefs
-          mklittlefs --version || true
+          sudo mv "$BIN" /usr/local/bin/mklittlefs
+          mklittlefs --version 2>&1 | head -n3 || true
 
       - name: Generate littlefs.bin
         run: |
