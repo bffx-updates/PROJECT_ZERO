@@ -23,6 +23,9 @@
 *.swp
 *.swo
 
+# Excecao: binarios servidos pela pagina de flash (firmware + LittleFS)
+!upload_littlefs/*.bin
+
 # ── webApp build (node toolchain local) ────────────────────────────────
 webApp/node_modules/
 webApp/package-lock.json
