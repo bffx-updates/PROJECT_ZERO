@@ -81,7 +81,11 @@ async function buildCSS() {
 
 async function buildJS() {
   const config = {
-    entryPoints: [join(WEBAPP_DIR, 'build', 'entry.js')],
+    // app.jsx vira o entrypoint direto. esbuild prepende automaticamente
+    // imports de build/react-inject.js (via "inject") em todo modulo que
+    // mencione React ou ReactDOM como identificador livre. Isso troca o
+    // React global do source pelo shim Preact em escopo de modulo.
+    entryPoints: [join(WEBAPP_DIR, 'app.jsx')],
     outfile: join(DATA_DIR, 'app.js'),
     bundle: true,
     minify: true,
@@ -89,11 +93,12 @@ async function buildJS() {
     format: 'iife',
     loader: {
       '.jsx': 'jsx',
-      '.js': 'jsx', // entry.js tambem usa JSX-friendly transform pra app.jsx
+      '.js': 'jsx',
     },
     jsx: 'automatic',
     jsxImportSource: 'preact',
     alias: PREACT_ALIASES,
+    inject: [join(WEBAPP_DIR, 'build', 'react-inject.js')],
     legalComments: 'none',
     logLevel: 'warning',
     define: {
