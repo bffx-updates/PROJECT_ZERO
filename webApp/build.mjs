@@ -40,15 +40,36 @@ async function ensureCleanData() {
   }
   // Preserva arquivos de runtime que o firmware escreve (wifi_sta.txt etc)
   // — so apaga o que o build gera.
-  for (const name of ['index.html', 'app.js', 'app.css']) {
+  for (const name of ['index.html', 'app.js', 'app.css', 'manifest.webmanifest']) {
     const p = join(DATA_DIR, name);
     if (existsSync(p)) await rm(p);
+  }
+  // icons/ recriado a cada build
+  const iconsDir = join(DATA_DIR, 'icons');
+  if (existsSync(iconsDir)) await rm(iconsDir, { recursive: true, force: true });
+}
+
+async function copyPwaAssets() {
+  // Manifest
+  const src = join(WEBAPP_DIR, 'manifest.webmanifest');
+  if (existsSync(src)) await copyFile(src, join(DATA_DIR, 'manifest.webmanifest'));
+  // Icons
+  const iconsSrc = join(WEBAPP_DIR, 'icons');
+  if (existsSync(iconsSrc)) {
+    const iconsOut = join(DATA_DIR, 'icons');
+    await mkdir(iconsOut, { recursive: true });
+    const files = await readdir(iconsSrc);
+    for (const f of files) {
+      await copyFile(join(iconsSrc, f), join(iconsOut, f));
+    }
   }
 }
 
 async function buildHTML() {
-  // HTML minimo, sem PWA stuff (manifest/service worker), sem React via CDN,
-  // sem Babel inline. Carrega so o bundle + CSS minificados que o ESP32 serve.
+  // HTML com link de manifest + meta tags pra iOS Safari "Add to Home Screen".
+  // No Android Chrome o servico HTTP em IP local nao dispara o banner de
+  // install automatico, mas o usuario pode usar "Adicionar a tela inicial"
+  // no menu manualmente. Em ambos, o manifest define icone, nome, cor.
   const html = `<!doctype html>
 <html lang="pt-BR">
 <head>
@@ -56,6 +77,14 @@ async function buildHTML() {
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#0a0a0c">
 <title>BFMIDI</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/svg+xml" href="icons/app.svg">
+<link rel="icon" type="image/png" sizes="192x192" href="icons/app-192.png">
+<link rel="apple-touch-icon" href="icons/app-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="BFMIDI">
+<meta name="mobile-web-app-capable" content="yes">
 <link rel="stylesheet" href="app.css">
 </head>
 <body>
@@ -125,19 +154,31 @@ const PARTITION_SIZE = 960 * 1024; // 0xF0000 = 960 KB (ver partitions.csv)
 async function report() {
   let total = 0;
   console.log('\n[build] saida em data/:');
-  for (const name of ['index.html', 'app.js', 'app.css']) {
+  const main = ['index.html', 'app.js', 'app.css', 'manifest.webmanifest'];
+  for (const name of main) {
     const p = join(DATA_DIR, name);
+    if (!existsSync(p)) continue;
     const s = await stat(p);
     total += s.size;
-    console.log(`  ${name.padEnd(14)} ${formatBytes(s.size).padStart(10)}`);
+    console.log(`  ${name.padEnd(22)} ${formatBytes(s.size).padStart(10)}`);
+  }
+  const iconsDir = join(DATA_DIR, 'icons');
+  if (existsSync(iconsDir)) {
+    const files = await readdir(iconsDir);
+    for (const f of files) {
+      const p = join(iconsDir, f);
+      const s = await stat(p);
+      total += s.size;
+      console.log(`  ${('icons/' + f).padEnd(22)} ${formatBytes(s.size).padStart(10)}`);
+    }
   }
   const pct = ((total / PARTITION_SIZE) * 100).toFixed(1);
-  console.log(`  ${'TOTAL'.padEnd(14)} ${formatBytes(total).padStart(10)}   (${pct}% da particao LittleFS de ${formatBytes(PARTITION_SIZE)})`);
+  console.log(`  ${'TOTAL'.padEnd(22)} ${formatBytes(total).padStart(10)}   (${pct}% da particao LittleFS de ${formatBytes(PARTITION_SIZE)})`);
 }
 
 async function main() {
   await ensureCleanData();
-  await Promise.all([buildHTML(), buildCSS(), buildJS()]);
+  await Promise.all([buildHTML(), buildCSS(), buildJS(), copyPwaAssets()]);
   if (!watch) await report();
 }
 
