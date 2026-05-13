@@ -739,9 +739,18 @@ function PresetEditorCard({ tag, onDisplayNameChange, onRegisterSave }) {
   return (
     <div className="bf-preset-card">
       <div className="bf-preset-card-head">
-        <div className="bf-preset-card-title">
-          <span>PRESET</span>
-          <span>SETTINGS</span>
+        <div
+          className={'bf-status-badge is-' + (status === 'saving' ? 'saving' : status === 'error' ? 'error' : isDirty ? 'dirty' : 'ok')}
+          title={
+            status === 'saving' ? 'Salvando...'
+            : status === 'error' ? 'Erro ao salvar'
+            : isDirty ? 'Mudancas nao salvas — clique em SAVE'
+            : 'Tudo salvo'
+          }
+          aria-label="Status de salvamento do preset"
+        >
+          <span className="bf-status-dot" aria-hidden="true"></span>
+          <span className="bf-status-label">STATUS</span>
         </div>
         <div className="bf-preset-tabs" role="tablist" aria-label="Modo de edicao do preset">
           <button
