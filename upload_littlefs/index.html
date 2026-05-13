@@ -554,8 +554,10 @@ async function handleFlash() {
     });
 
     setStatus('Resetando dispositivo...', 'progress');
+    // after() ja faz o hardReset internamente nas versoes novas do
+    // esptool-js. O dispositivo desconecta (USB CDC nativo reinicia),
+    // entao erros aqui sao esperados — so logamos.
     try { await state.loader.after(); } catch (e) { log('after() warning: ' + e.message); }
-    try { await state.loader.hardReset(); } catch (e) { log('hardReset warning: ' + e.message); }
 
     setProgress(100);
     setStatus('Atualizado com sucesso! O BFMIDI vai reiniciar.', 'success');
