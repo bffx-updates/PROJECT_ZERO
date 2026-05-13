@@ -471,6 +471,7 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
   padding: 8px 10px;
   font-family: var(--font-display);
   cursor: pointer;
+  box-shadow: 0 0 6px rgba(220,220,230,0.14), 0 0 16px rgba(220,220,230,0.18);
   transition: transform 0.15s ease, box-shadow 0.2s ease;
 }
 .bf-preset .num {
@@ -1354,6 +1355,7 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
   border: 1px solid var(--hair);
   border-radius: 22px;
   padding: 20px 22px 22px;
+  box-shadow: 0 0 8px rgba(220,220,230,0.14), 0 0 22px rgba(220,220,230,0.18);
 }
 .bf-preset-card-head {
   display: flex;

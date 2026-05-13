@@ -40,7 +40,7 @@ async function ensureCleanData() {
   }
   // Preserva arquivos de runtime que o firmware escreve (wifi_sta.txt etc)
   // — so apaga o que o build gera.
-  for (const name of ['index.html', 'app.js', 'app.css', 'manifest.webmanifest']) {
+  for (const name of ['index.html', 'app.js', 'app.css', 'manifest.webmanifest', 'sw.js']) {
     const p = join(DATA_DIR, name);
     if (existsSync(p)) await rm(p);
   }
@@ -90,6 +90,7 @@ async function buildHTML() {
 <body>
 <div id="root"></div>
 <script src="app.js"></script>
+<script>if('serviceWorker' in navigator){window.addEventListener('load',function(){navigator.serviceWorker.register('./sw.js').catch(function(){})})}</script>
 </body>
 </html>
 `;
@@ -106,6 +107,79 @@ async function buildCSS() {
     loader: { '.css': 'css' },
     logLevel: 'silent',
   });
+}
+
+// Service worker pra producao. APP_SHELL reflete os arquivos que o build
+// emite em data/ — diferente de webApp/sw.js (dev), que cita app.jsx e
+// vendor/* nao existentes em prod. Cross-origin (API HTTP do dispositivo)
+// continua passthrough. Bumpe CACHE_NAME quando mudar APP_SHELL ou a
+// estrategia de fetch — o handler de activate apaga caches antigos.
+async function buildSW() {
+  const sw = `// BFMIDI Editor — Service Worker (gerado por webApp/build.mjs).
+const CACHE_NAME = 'bfmidi-prod-v1';
+const APP_SHELL = [
+  './',
+  './index.html',
+  './app.css',
+  './app.js',
+  './manifest.webmanifest',
+  './icons/app.svg',
+  './icons/app-192.png',
+  './icons/app-512.png',
+];
+
+self.addEventListener('install', (event) => {
+  event.waitUntil(
+    caches.open(CACHE_NAME)
+      .then((cache) => cache.addAll(APP_SHELL).catch(() => null))
+  );
+  self.skipWaiting();
+});
+
+self.addEventListener('activate', (event) => {
+  event.waitUntil(
+    caches.keys().then((keys) =>
+      Promise.all(
+        keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k))
+      )
+    )
+  );
+  self.clients.claim();
+});
+
+self.addEventListener('fetch', (event) => {
+  const req = event.request;
+  if (req.method !== 'GET') return;
+
+  const url = new URL(req.url);
+  // Cross-origin (ex: API HTTP do dispositivo em outro IP) -> passthrough.
+  if (url.origin !== self.location.origin) return;
+
+  event.respondWith(
+    caches.match(req).then((cached) => {
+      if (cached) return cached;
+      return fetch(req).then((resp) => {
+        if (resp && resp.ok) {
+          const p = url.pathname.toLowerCase();
+          if (p.endsWith('.js')   || p.endsWith('.css') ||
+              p.endsWith('.svg')  || p.endsWith('.png') ||
+              p.endsWith('.webmanifest') || p.endsWith('.json')) {
+            const copy = resp.clone();
+            caches.open(CACHE_NAME).then((c) => c.put(req, copy)).catch(() => {});
+          }
+        }
+        return resp;
+      }).catch(() => {
+        if (req.mode === 'navigate') {
+          return caches.match('./index.html');
+        }
+        return new Response('', { status: 504, statusText: 'offline' });
+      });
+    })
+  );
+});
+`;
+  await writeFile(join(DATA_DIR, 'sw.js'), sw, 'utf8');
 }
 
 async function buildJS() {
@@ -154,7 +228,7 @@ const PARTITION_SIZE = 960 * 1024; // 0xF0000 = 960 KB (ver partitions.csv)
 async function report() {
   let total = 0;
   console.log('\n[build] saida em data/:');
-  const main = ['index.html', 'app.js', 'app.css', 'manifest.webmanifest'];
+  const main = ['index.html', 'app.js', 'app.css', 'manifest.webmanifest', 'sw.js'];
   for (const name of main) {
     const p = join(DATA_DIR, name);
     if (!existsSync(p)) continue;
@@ -178,7 +252,7 @@ async function report() {
 
 async function main() {
   await ensureCleanData();
-  await Promise.all([buildHTML(), buildCSS(), buildJS(), copyPwaAssets()]);
+  await Promise.all([buildHTML(), buildCSS(), buildJS(), buildSW(), copyPwaAssets()]);
   if (!watch) await report();
 }
 
