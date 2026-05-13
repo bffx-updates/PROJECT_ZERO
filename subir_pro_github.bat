@@ -53,6 +53,17 @@ if errorlevel 1 (
 )
 
 echo.
+echo Sincronizando com o GitHub (caso o CI tenha commitado litttlefs.bin)...
+git pull --rebase --autostash
+if errorlevel 1 (
+  echo.
+  echo ERRO no pull. Pode ter conflito. Resolva manualmente e rode de novo.
+  echo.
+  pause
+  exit /b 1
+)
+
+echo.
 echo Enviando pro GitHub...
 git push
 if errorlevel 1 (
