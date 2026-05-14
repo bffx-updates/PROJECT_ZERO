@@ -14,8 +14,11 @@
   --ghost: rgba(235,235,245,0.18);
   --accent: #ff6a1f;
   --accent-2: #ff8a3a;
-  --accent-soft: rgba(255,106,31,0.16);
-  --accent-glow: rgba(255,106,31,0.55);
+  /* accent-soft e accent-glow derivados de --accent via color-mix —
+     quando --accent muda (sobrescrita pelo tile-color em .bf-screen),
+     esses derivados acompanham automaticamente. */
+  --accent-soft: color-mix(in srgb, var(--accent) 16%, transparent);
+  --accent-glow: color-mix(in srgb, var(--accent) 55%, transparent);
   --success: #30d158;
   --danger: #ff453a;
   --blue: #0a84ff;
@@ -578,7 +581,6 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
 .bf-tab.is-active.system_config {
   background: var(--accent);
   color: #1a0e06;
-  box-shadow: 0 0 22px var(--accent-glow);
 }
 .bf-save {
   appearance: none;
@@ -650,7 +652,9 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
 .bf-slider-fill {
   position: absolute;
   top: 0; left: 0; bottom: 0;
-  background: linear-gradient(90deg, rgba(255,106,31,0.20), rgba(255,106,31,0.7));
+  background: linear-gradient(90deg,
+    color-mix(in srgb, var(--accent) 20%, transparent),
+    color-mix(in srgb, var(--accent) 70%, transparent));
   border-right: 1px solid var(--accent);
   box-shadow: 0 0 32px var(--accent-glow);
 }
@@ -742,8 +746,241 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
 .bf-seg button.is-active {
   background: var(--accent);
   color: #1a0e06;
-  box-shadow: 0 1px 6px rgba(0,0,0,0.4), 0 0 18px var(--accent-glow);
+  box-shadow: 0 1px 6px rgba(0,0,0,0.4);
 }
+
+/* Toggle PRESET MODE / LIVE MODE — fica entre a selecao de banco/preset
+   e o card SET PRESET. Reusa .bf-seg, so um pouco mais alto por ser um
+   controle primario de modo. A margem inferior espelha o gap do
+   .bf-bank-row pra manter o ritmo vertical da pagina. */
+.bf-mode-switch {
+  margin: 0 0 18px;
+}
+.bf-mode-switch button {
+  height: 44px;
+  font-size: 12px;
+}
+
+/* ---- LIVE MODE: grade de switches SW1..SW6 + card de config ---- */
+.bf-sw-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+.bf-sw-btn {
+  appearance: none;
+  border: 1px solid var(--hair);
+  background: linear-gradient(180deg, #1b1b20 0%, #131318 100%);
+  color: var(--text);
+  border-radius: 14px;
+  padding: 12px 6px 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  box-shadow: 0 0 8px rgba(0,0,0,0.55), 0 0 18px rgba(0,0,0,0.65);
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.bf-sw-btn .bf-tab-ico { width: 34px; height: 34px; }
+.bf-sw-btn-label {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+}
+.bf-sw-btn:hover { border-color: var(--hair-strong); }
+.bf-sw-btn.is-active {
+  border-color: var(--tile-color, var(--accent));
+  background:
+    radial-gradient(120% 80% at 50% 0%, color-mix(in srgb, var(--tile-color, var(--accent)) 32%, transparent) 0%, transparent 70%),
+    linear-gradient(180deg, #2a1a10 0%, #18120e 100%);
+}
+
+/* Card de config do SW — 2 icones (engrenagem | display) no topo-esquerda */
+.bf-sw-card {
+  margin-top: 18px;
+  background: linear-gradient(180deg, #1a1a1e 0%, #131318 100%);
+  border: 1px solid var(--hair);
+  border-radius: 22px;
+  padding: 20px 22px 22px;
+  box-shadow: 0 0 10px rgba(0,0,0,0.55), 0 0 26px rgba(0,0,0,0.65);
+}
+.bf-sw-card-tabs {
+  display: flex;
+  gap: 8px;
+  padding-bottom: 16px;
+  margin-bottom: 18px;
+  border-bottom: 1px solid var(--hair);
+}
+.bf-sw-card-tab {
+  appearance: none;
+  border: 1px solid var(--hair);
+  background: linear-gradient(180deg, #1b1b20 0%, #131318 100%);
+  color: var(--text);
+  width: 52px;
+  height: 52px;
+  border-radius: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  box-shadow: 0 0 8px rgba(0,0,0,0.55), 0 0 18px rgba(0,0,0,0.65);
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.bf-sw-card-tab:hover { border-color: var(--hair-strong); }
+.bf-sw-card-tab.is-active {
+  border-color: var(--tile-color, var(--accent));
+  background:
+    radial-gradient(120% 80% at 50% 0%, color-mix(in srgb, var(--tile-color, var(--accent)) 32%, transparent) 0%, transparent 70%),
+    linear-gradient(180deg, #2a1a10 0%, #18120e 100%);
+}
+.bf-sw-card-tab .bf-tab-ico { width: 30px; height: 30px; }
+.bf-sw-card-body {
+  /* Vazio por enquanto na aba engrenagem; min-height mantem a forma do
+     card enquanto as configs de cada modo nao chegam. */
+  min-height: 200px;
+}
+.bf-sw-card-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 180px;
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* Grade dos 10 modos de operacao de SW (aba engrenagem do card) */
+.bf-sw-mode-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.bf-sw-mode {
+  appearance: none;
+  border: 1px solid var(--hair);
+  background: linear-gradient(180deg, #1b1b20 0%, #131318 100%);
+  color: var(--text);
+  border-radius: 14px;
+  padding: 14px 8px 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+  box-shadow: 0 0 8px rgba(0,0,0,0.55), 0 0 18px rgba(0,0,0,0.65);
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.bf-sw-mode:hover { border-color: var(--hair-strong); }
+.bf-sw-mode.is-active {
+  border-color: var(--tile-color, var(--accent));
+  background:
+    radial-gradient(120% 80% at 50% 0%, color-mix(in srgb, var(--tile-color, var(--accent)) 32%, transparent) 0%, transparent 70%),
+    linear-gradient(180deg, #2a1a10 0%, #18120e 100%);
+}
+.bf-sw-mode .bf-tab-ico { width: 40px; height: 40px; }
+.bf-sw-mode-title {
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+  line-height: 1;
+}
+.bf-sw-mode-sub {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--faint);
+  text-transform: uppercase;
+}
+
+/* Header do card: campo do modo atual à esquerda dos icones de aba.
+   Toque abre o popup de selecao de modo. */
+.bf-sw-mode-field {
+  flex: 1;
+  min-width: 0;
+  appearance: none;
+  border: 1px solid var(--hair);
+  background: linear-gradient(180deg, #1b1b20 0%, #131318 100%);
+  color: var(--text);
+  height: 52px;
+  border-radius: 14px;
+  padding: 0 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  transition: border-color 0.15s ease;
+}
+.bf-sw-mode-field:hover { border-color: var(--hair-strong); }
+.bf-sw-mode-field .bf-tab-ico { width: 30px; height: 30px; flex: 0 0 auto; }
+.bf-sw-mode-field-name {
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Popup (modal) de selecao de modo de operacao do SW */
+.bf-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(0,0,0,0.72);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+.bf-modal {
+  width: 100%;
+  max-width: 420px;
+  max-height: 82vh;
+  overflow-y: auto;
+  background: linear-gradient(180deg, #1a1a1e 0%, #131318 100%);
+  border: 1px solid var(--hair-strong);
+  border-radius: 22px;
+  padding: 18px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.7);
+}
+.bf-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+.bf-modal-title {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+.bf-modal-close {
+  appearance: none;
+  border: 0;
+  background: var(--card-2);
+  color: var(--text);
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+.bf-modal-close:hover { background: var(--hair-strong); }
 
 /* ---- Row (list) ---- */
 .bf-row {
@@ -913,9 +1150,9 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
   text-transform: uppercase;
 }
 .bf-model-tabs button.is-active {
-  border-color: var(--accent);
+  border-color: var(--tile-color, var(--accent));
   background:
-    radial-gradient(120% 80% at 50% 0%, rgba(255,106,31,0.32) 0%, transparent 70%),
+    radial-gradient(120% 80% at 50% 0%, color-mix(in srgb, var(--tile-color, var(--accent)) 32%, transparent) 0%, transparent 70%),
     linear-gradient(180deg, #2a1a10 0%, #18120e 100%);
 }
 
@@ -943,9 +1180,9 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
   transform: translateY(-50%);
 }
 .bf-model-row.is-active {
-  border-color: var(--accent);
+  border-color: var(--tile-color, var(--accent));
   background:
-    linear-gradient(180deg, rgba(255,106,31,0.10), rgba(255,106,31,0)) ,
+    linear-gradient(180deg, color-mix(in srgb, var(--tile-color, var(--accent)) 10%, transparent), transparent),
     var(--card-2);
 }
 .bf-model-radio {
@@ -956,14 +1193,14 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
   position: relative;
 }
 .bf-model-row.is-active .bf-model-radio {
-  border-color: var(--accent);
+  border-color: var(--tile-color, var(--accent));
 }
 .bf-model-row.is-active .bf-model-radio::after {
   content: "";
   position: absolute; inset: 3px;
   border-radius: 50%;
-  background: var(--accent);
-  box-shadow: 0 0 8px var(--accent-glow);
+  background: var(--tile-color, var(--accent));
+  box-shadow: 0 0 8px color-mix(in srgb, var(--tile-color, var(--accent)) 55%, transparent);
 }
 .bf-model-name {
   font-family: var(--font-mono);
@@ -1079,10 +1316,10 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
 .bf-action:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
 .bf-action:disabled { opacity: 0.45; cursor: not-allowed; }
 .bf-action.is-running {
-  border-color: var(--accent);
-  color: var(--accent);
+  border-color: var(--tile-color, var(--accent));
+  color: var(--tile-color, var(--accent));
   background:
-    radial-gradient(120% 80% at 50% 0%, rgba(255,106,31,0.32) 0%, transparent 70%),
+    radial-gradient(120% 80% at 50% 0%, color-mix(in srgb, var(--tile-color, var(--accent)) 32%, transparent) 0%, transparent 70%),
     linear-gradient(180deg, #2a1a10 0%, #18120e 100%);
 }
 .bf-btn {
@@ -1230,9 +1467,9 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
 }
 .bf-icon-tab:hover { border-color: var(--hair-strong); }
 .bf-icon-tab.is-on {
-  border-color: var(--accent);
+  border-color: var(--tile-color, var(--accent));
   background:
-    radial-gradient(120% 80% at 50% 0%, rgba(255,106,31,0.32) 0%, transparent 70%),
+    radial-gradient(120% 80% at 50% 0%, color-mix(in srgb, var(--tile-color, var(--accent)) 32%, transparent) 0%, transparent 70%),
     linear-gradient(180deg, #2a1a10 0%, #18120e 100%);
 }
 
@@ -1371,12 +1608,12 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
      saved  = sucesso — verde
      error  = falhou — vermelho
 */
-.bf-save { transition: background 0.15s ease, color 0.15s ease, box-shadow 0.2s ease; }
+.bf-save { transition: background 0.15s ease, color 0.15s ease; }
 .bf-save.is-idle   { background: var(--text);    color: #0c0c10; }
-.bf-save.is-dirty  { background: var(--danger);  color: #fff;    box-shadow: 0 0 14px rgba(255,69,58,0.45); }
-.bf-save.is-saving { background: var(--accent);  color: #1a0e06; box-shadow: 0 0 14px var(--accent-glow); }
-.bf-save.is-saved  { background: var(--success); color: #07140a; box-shadow: 0 0 14px rgba(48,209,88,0.45); }
-.bf-save.is-error  { background: var(--danger);  color: #fff;    box-shadow: 0 0 14px rgba(255,69,58,0.6); }
+.bf-save.is-dirty  { background: var(--danger);  color: #fff;    }
+.bf-save.is-saving { background: var(--accent);  color: #1a0e06; }
+.bf-save.is-saved  { background: var(--success); color: #07140a; }
+.bf-save.is-error  { background: var(--danger);  color: #fff;    }
 
 /* ---- Preset editor card (BANK page) ---- */
 .bf-form-row {
@@ -1608,9 +1845,9 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
 .bf-tab-line  { fill: none; stroke: currentColor; stroke-width: 1.8; }
 .bf-preset-tab:hover { border-color: var(--hair-strong); }
 .bf-preset-tab.is-active {
-  border-color: var(--accent);
+  border-color: var(--tile-color, var(--accent));
   background:
-    radial-gradient(120% 80% at 50% 0%, rgba(255,106,31,0.32) 0%, transparent 70%),
+    radial-gradient(120% 80% at 50% 0%, color-mix(in srgb, var(--tile-color, var(--accent)) 32%, transparent) 0%, transparent 70%),
     linear-gradient(180deg, #2a1a10 0%, #18120e 100%);
 }
 .bf-preset-card-body {

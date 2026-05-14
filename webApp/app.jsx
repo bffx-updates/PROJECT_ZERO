@@ -748,6 +748,13 @@ function PresetEditorCard({ tag, onDisplayNameChange, onRegisterSave }) {
     if (!onRegisterSave) return;
     onRegisterSave({ save: savePreset, status, isDirty });
   }, [onRegisterSave, savePreset, status, isDirty]);
+
+  // Ao desmontar (ex: trocar pra LIVE MODE, o card some), limpa o registro
+  // pra que o botao SAVE do TabBar volte a idle. onRegisterSave e estavel
+  // (useCallback []), entao este cleanup so roda no unmount.
+  useEffect(() => {
+    return () => { if (onRegisterSave) onRegisterSave(null); };
+  }, [onRegisterSave]);
   const statusLabel = {
     loading: 'CARREGANDO',
     saving: 'SALVANDO',
@@ -1216,35 +1223,283 @@ function PageHeader({
   );
 }
 
+// ─── LIVE MODE ──────────────────────────────────────────────────────
+// Em LIVE MODE a pagina mostra 6 botoes (SW1..SW6). Cada switch e
+// independente; clicar abre um card de config abaixo. O card tem 2
+// icones no topo-esquerda — engrenagem (config) e display (visual) —
+// e sempre abre na engrenagem. Os conteudos de cada aba serao
+// implementados aos poucos.
+
+// As 10 opcoes de modo de operacao de um SW em LIVE MODE. id = chave
+// interna; title = rotulo grande; sub = descritor. O comportamento de
+// cada modo sera implementado aos poucos — por ora e so a selecao.
+const SW_MODES = [
+  // MUTE = padrao de um SW sem modo salvo (silencioso, nao faz nada).
+  { id: 'mute',      title: 'MUTE',      sub: 'MUTE' },
+  // STOMP-1/2/3 = stomps; a diferenca esta no gesto que cada um trata:
+  { id: 'fx1',       title: 'STOMP - 1', sub: 'STOMP' },        // click
+  { id: 'fx2',       title: 'STOMP - 2', sub: 'DUAL STOMP' },   // click + long click
+  { id: 'fx3',       title: 'STOMP - 3', sub: 'TRIAL STOMP' },  // click + long click + reclick
+  { id: 'spin',      title: 'SPIN',      sub: 'SPIN' },
+  { id: 'ramp',      title: 'RAMPA',     sub: 'RAMP' },
+  { id: 'momentary', title: 'MOMENTARY', sub: 'MOMENTARY' },
+  { id: 'favorite',  title: 'FAVORITE',  sub: 'FAVORITE' },
+  { id: 'macros',    title: 'MACROS',    sub: 'MACROS' },
+  { id: 'tap_tempo', title: 'TAP TEMPO', sub: 'TAP TEMPO' },
+  { id: 'single',    title: 'SINGLE',    sub: 'SINGLE' },
+];
+
+// sw_modes no PRESET: 6 indices em SW_MODES, formato compacto "i,i,i,i,i,i".
+// "0,4,0,..." <-> { 1:'mute', 2:'spin', ... }. Indice fora de faixa cai
+// em 'mute' (0) — cobre presets antigos sem o campo.
+function parseSwModesStr(s) {
+  const parts = (typeof s === 'string' && s ? s : '').split(',');
+  const out = {};
+  for (let i = 0; i < 6; i++) {
+    const mode = SW_MODES[parseInt(parts[i], 10)] || SW_MODES[0];
+    out[i + 1] = mode.id;
+  }
+  return out;
+}
+function swModesToStr(obj) {
+  const parts = [];
+  for (let n = 1; n <= 6; n++) {
+    let idx = SW_MODES.findIndex((m) => m.id === ((obj && obj[n]) || 'mute'));
+    if (idx < 0) idx = 0;
+    parts.push(idx);
+  }
+  return parts.join(',');
+}
+
+// Footswitch (pedal de stomp) — cap arredondado + pescoco + base em 2
+// niveis. Reutilizado por FX1/FX2/FX3; a diferenca entre eles esta no
+// comportamento (ver SW_MODES), nao no desenho.
+function swFootswitch() {
+  return (
+    <>
+      <rect className="bf-tab-shape" x="8" y="2.5" width="8" height="8" rx="3" />
+      <path className="bf-tab-shape" d="M10 10.5 L10 12.5 M14 10.5 L14 12.5" />
+      <rect className="bf-tab-shape" x="6.5" y="12.5" width="11" height="3" rx="0.6" />
+      <rect className="bf-tab-shape" x="4" y="15.5" width="16" height="4" rx="0.8" />
+    </>
+  );
+}
+
+function swIcoSvg(children) {
+  return (
+    <svg viewBox="0 0 24 24" className="bf-tab-ico" strokeLinecap="round"
+         strokeLinejoin="round" aria-hidden="true">{children}</svg>
+  );
+}
+
+// Icone line-art de cada modo de SW. Mesmo estilo dos demais icones do
+// app (bf-tab-shape = traco, bf-tab-dot = preenchido).
+function SwModeIcon({ id }) {
+  switch (id) {
+    case 'mute':  // alto-falante mudo — SW silencioso (padrao)
+      return swIcoSvg(<>
+        <path className="bf-tab-shape" d="M3.5 9.5 L7 9.5 L11 6 L11 18 L7 14.5 L3.5 14.5 Z" />
+        <path className="bf-tab-shape" d="M14.5 9 L20 15 M20 9 L14.5 15" />
+      </>);
+    case 'fx1':  // STOMP — click
+    case 'fx2':  // DUAL STOMP — click + long click
+    case 'fx3':  // TRIAL STOMP — click + long click + reclick
+      return swIcoSvg(swFootswitch());
+    case 'spin':  // knob + ponteiro + ticks radiais
+      return swIcoSvg(<>
+        <circle className="bf-tab-shape" cx="12" cy="12" r="6" />
+        <path className="bf-tab-shape" d="M12 12 L15.5 8.5" />
+        <path className="bf-tab-shape" d="M19.5 12 L21.5 12 M17.3 6.7 L18.7 5.3 M12 4.5 L12 2.5 M6.7 6.7 L5.3 5.3 M4.5 12 L2.5 12 M6.7 17.3 L5.3 18.7 M12 19.5 L12 21.5 M17.3 17.3 L18.7 18.7" />
+      </>);
+    case 'ramp':  // triangulo com hipotenusa tracejada
+      return swIcoSvg(<>
+        <path className="bf-tab-shape" d="M4 19 L20 19 L20 5" />
+        <path className="bf-tab-shape" strokeDasharray="3 2.4" d="M4 19 L20 5" />
+      </>);
+    case 'momentary':  // sinaleiro / luz de alerta
+      return swIcoSvg(<>
+        <path className="bf-tab-shape" d="M9 18.5 L15 18.5 L15.7 20.8 L8.3 20.8 Z" />
+        <path className="bf-tab-shape" d="M9 18.5 L9 13.5 C9 10.2 10.3 9 12 9 C13.7 9 15 10.2 15 13.5 L15 18.5" />
+        <path className="bf-tab-shape" d="M12 7 L12 4.5 M7.7 8.3 L6 6.6 M16.3 8.3 L18 6.6 M6.3 12 L4 11.3 M17.7 12 L20 11.3" />
+      </>);
+    case 'favorite':  // estrela
+      return swIcoSvg(
+        <path className="bf-tab-shape" d="M12 2.5 L14.85 8.9 L21.5 9.6 L16.5 14.1 L18 20.7 L12 17.3 L6 20.7 L7.5 14.1 L2.5 9.6 L9.15 8.9 Z" />
+      );
+    case 'macros':  // 3 faders verticais
+      return swIcoSvg(<>
+        <path className="bf-tab-shape" d="M7 4 L7 20 M12 4 L12 20 M17 4 L17 20" />
+        <rect className="bf-tab-dot" x="4.8" y="7" width="4.4" height="2.6" rx="0.7" />
+        <rect className="bf-tab-dot" x="9.8" y="12.5" width="4.4" height="2.6" rx="0.7" />
+        <rect className="bf-tab-dot" x="14.8" y="9.5" width="4.4" height="2.6" rx="0.7" />
+      </>);
+    case 'tap_tempo':  // relogio com linhas de movimento
+      return swIcoSvg(<>
+        <circle className="bf-tab-shape" cx="12" cy="12" r="6.5" />
+        <path className="bf-tab-shape" d="M12 12 L12 7.8 M12 12 L15 13.5" />
+        <path className="bf-tab-shape" d="M4 8 C2.6 12 2.6 12 4 16 M20 8 C21.4 12 21.4 12 20 16" />
+      </>);
+    case 'single':  // moldura de foco + circulo central
+      return swIcoSvg(<>
+        <path className="bf-tab-shape" d="M3.5 8 L3.5 4.5 L7 4.5 M17 4.5 L20.5 4.5 L20.5 8 M20.5 16 L20.5 19.5 L17 19.5 M7 19.5 L3.5 19.5 L3.5 16" />
+        <circle className="bf-tab-shape" cx="12" cy="12" r="4" />
+      </>);
+    default:  // sem modo definido — placeholder pontilhado
+      return swIcoSvg(
+        <circle className="bf-tab-shape" cx="12" cy="12" r="7" strokeDasharray="2.5 3" opacity="0.45" />
+      );
+  }
+}
+
+function LiveModePanel({ presetCount, swModes, onSetSwMode }) {
+  const [selectedSw, setSelectedSw] = useState(null);  // 1..N ou null
+  const [cardTab, setCardTab] = useState('gear');      // 'gear' | 'display'
+  const [pickerOpen, setPickerOpen] = useState(false); // popup de selecao de modo
+  const switches = Array.from({ length: presetCount }, (_, i) => i + 1);
+
+  // Modo de um SW: o que estiver salvo, ou MUTE como padrao quando nada
+  // foi salvo ainda.
+  const modeOf = (n) => swModes[n] || 'mute';
+
+  const selectSw = (n) => {
+    setPickerOpen(false);
+    if (selectedSw === n) { setSelectedSw(null); return; }  // re-clicar fecha
+    setSelectedSw(n);
+    setCardTab('gear');  // o card sempre abre em modo engrenagem
+  };
+
+  // Modo do SW aberto — sempre definido (MUTE quando nada salvo).
+  const currentMode = SW_MODES.find((m) => m.id === modeOf(selectedSw));
+
+  return (
+    <>
+      <div className="bf-sw-row">
+        {switches.map((n) => (
+          <button
+            key={n}
+            type="button"
+            className={'bf-sw-btn' + (selectedSw === n ? ' is-active' : '')}
+            onClick={() => selectSw(n)}
+          >
+            <SwModeIcon id={modeOf(n)} />
+            <span className="bf-sw-btn-label">SW{n}</span>
+          </button>
+        ))}
+      </div>
+
+      {selectedSw !== null && (
+        <div className="bf-sw-card">
+          <div className="bf-sw-card-tabs" aria-label={`Configuração do SW${selectedSw}`}>
+            <button
+              type="button"
+              className="bf-sw-mode-field"
+              onClick={() => setPickerOpen(true)}
+              aria-label={`Modo: ${currentMode.title}. Toque para trocar.`}
+            >
+              <SwModeIcon id={modeOf(selectedSw)} />
+              <span className="bf-sw-mode-field-name">{currentMode.title}</span>
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={cardTab === 'gear'}
+              className={'bf-sw-card-tab' + (cardTab === 'gear' ? ' is-active' : '')}
+              onClick={() => setCardTab('gear')}
+              aria-label="Configurações"
+            >
+              <svg viewBox="0 0 24 24" className="bf-tab-ico" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                {/* Engrenagem (cog) — outline classico de configuracoes */}
+                <circle className="bf-tab-shape" cx="12" cy="12" r="3" />
+                <path className="bf-tab-shape" d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={cardTab === 'display'}
+              className={'bf-sw-card-tab' + (cardTab === 'display' ? ' is-active' : '')}
+              onClick={() => setCardTab('display')}
+              aria-label="Display"
+            >
+              <svg viewBox="0 0 24 24" className="bf-tab-ico" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                {/* Monitor com EQ bars — mesmo icone da aba DISPLAY do preset */}
+                <rect className="bf-tab-shape" x="2.5" y="4.5" width="19" height="12" rx="1.6" />
+                <rect className="bf-tab-dot" x="6"  y="11" width="1.6" height="3.5" />
+                <rect className="bf-tab-dot" x="9"  y="9"  width="1.6" height="5.5" />
+                <rect className="bf-tab-dot" x="12" y="7"  width="1.6" height="7.5" />
+                <rect className="bf-tab-dot" x="15" y="10" width="1.6" height="4.5" />
+                <rect className="bf-tab-dot" x="18" y="12" width="1.6" height="2.5" />
+                <path className="bf-tab-shape" d="M9 21h6 M12 16.5v4.5" />
+              </svg>
+            </button>
+          </div>
+
+          <div className="bf-sw-card-body">
+            {cardTab === 'display' && (
+              <div className="bf-sw-card-empty">SW{selectedSw} · display em breve</div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {pickerOpen && selectedSw !== null && (
+        <div className="bf-modal-backdrop" onClick={() => setPickerOpen(false)}>
+          <div
+            className="bf-modal"
+            role="dialog"
+            aria-label={`Modo de operação do SW${selectedSw}`}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="bf-modal-head">
+              <span className="bf-modal-title">SW{selectedSw} · modo de operação</span>
+              <button
+                type="button"
+                className="bf-modal-close"
+                onClick={() => setPickerOpen(false)}
+                aria-label="Fechar"
+              >
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true">
+                  <path d="M5 5 L19 19 M19 5 L5 19" />
+                </svg>
+              </button>
+            </div>
+            <div className="bf-sw-mode-grid">
+              {SW_MODES.map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  className={'bf-sw-mode' + (modeOf(selectedSw) === m.id ? ' is-active' : '')}
+                  onClick={() => { onSetSwMode(selectedSw, m.id); setPickerOpen(false); }}
+                >
+                  <SwModeIcon id={m.id} />
+                  <span className="bf-sw-mode-title">{m.title}</span>
+                  <span className="bf-sw-mode-sub">{m.sub}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 function PagePresetConfig({
   bankLetterIndex, presetNumber, bankData, bankDisplayName, bankState, deviceState,
   usbState, onToggleUsb,
   connectionMode, onToggleConnectionMode,
   presetCount, onNextLetter, onSelectPreset, onDisplayNameChange,
   onRegisterPresetSave,
-  ledColorMode, letterLedColors, switchLedColors,
+  switchMode, onSetSwitchMode,
+  swModes, onSetSwMode,
 }) {
   const letters = ['A', 'B', 'C', 'D', 'E'];
   const tag = `${letters[bankLetterIndex]}${presetNumber}`;
   const presets = Array.from({ length: presetCount }, (_, i) => i + 1);
   const tileName = (bankDisplayName && bankDisplayName.trim()) || tag;
 
-  // Cor dinamica do bank-tile e dos preset buttons.
-  //   modo POR LETRA  : bank-tile e preset ativo usam a cor da letra atual
-  //   modo POR SWITCH : bank-tile espelha a cor do SWITCH ATIVO (mesma do
-  //                     preset selecionado); cada preset n usa a cor do
-  //                     seu proprio switch.
-  const safeColor = (idx, fallback = '#ff7a1a') =>
-    (LED_COLORS[idx] && LED_COLORS[idx].hex) || fallback;
-  const letterIdx = (letterLedColors && letterLedColors[bankLetterIndex]) ?? 7;
-  const presetColorFor = (n) => {
-    if (ledColorMode === 'numeros' && switchLedColors) {
-      const swIdx = switchLedColors[n - 1];
-      return safeColor(swIdx, safeColor(letterIdx));
-    }
-    return safeColor(letterIdx);
-  };
-  const bankColor = presetColorFor(presetNumber);
+  // --tile-color e setado no nivel do .bf-screen (App.jsx) baseado no
+  // banco/preset ativo — bank-tile e preset.is-active herdam dele.
 
   return (
     <div className="bf-content" key="bank">
@@ -1261,7 +1516,6 @@ function PagePresetConfig({
         <button
           type="button"
           className={'bf-bank-tile' + (bankState === 'loading' ? ' is-loading' : bankState === 'error' ? ' is-error' : '')}
-          style={{ '--tile-color': bankColor }}
           onClick={onNextLetter}
           aria-label={`Bank ${letters[bankLetterIndex]} (${tag}) — toque para alternar`}
           title={`${tag} · ${bankState === 'loading' ? 'LOADING' : bankState === 'error' ? 'ERROR' : 'LOADED'}`}
@@ -1270,26 +1524,34 @@ function PagePresetConfig({
           <span className="letter">{letters[bankLetterIndex]}</span>
           <span className="bf-bank-name" title={tileName}>{tileName}</span>
         </button>
-        {presets.map((n) => {
-          const isActive = n === presetNumber;
-          const styleProp = isActive ? { '--tile-color': presetColorFor(n) } : undefined;
-          return (
-            <button
-              key={n}
-              type="button"
-              className={'bf-preset' + (isActive ? ' is-active' : '')}
-              style={styleProp}
-              onClick={() => onSelectPreset(n)}
-            >
-              <span className="led" />
-              <span className="num">{n}</span>
-              <span className="label">PRESET</span>
-            </button>
-          );
-        })}
+        {presets.map((n) => (
+          <button
+            key={n}
+            type="button"
+            className={'bf-preset' + (n === presetNumber ? ' is-active' : '')}
+            onClick={() => onSelectPreset(n)}
+          >
+            <span className="led" />
+            <span className="num">{n}</span>
+            <span className="label">PRESET</span>
+          </button>
+        ))}
       </div>
 
-      <PresetEditorCard tag={tag} onDisplayNameChange={onDisplayNameChange} onRegisterSave={onRegisterPresetSave} />
+      <div className="bf-seg bf-mode-switch">
+        <button
+          className={switchMode === 'live' ? '' : 'is-active'}
+          onClick={() => onSetSwitchMode && onSetSwitchMode('preset')}
+        >PRESET MODE</button>
+        <button
+          className={switchMode === 'live' ? 'is-active' : ''}
+          onClick={() => onSetSwitchMode && onSetSwitchMode('live')}
+        >LIVE MODE</button>
+      </div>
+
+      {switchMode === 'live'
+        ? <LiveModePanel presetCount={presetCount} swModes={swModes} onSetSwMode={onSetSwMode} />
+        : <PresetEditorCard tag={tag} onDisplayNameChange={onDisplayNameChange} onRegisterSave={onRegisterPresetSave} />}
     </div>
   );
 }
@@ -2339,6 +2601,46 @@ function App() {
   const [bankData, setBankData] = useState('');
   const [bankDisplayName, setBankDisplayName] = useState('');
   const [bankState, setBankState] = useState('idle');
+  // Modo de operacao do hardware: 'preset' (BANK no firmware) ou 'live'.
+  // Sincronizado via /bank/current (poll) e alterado via POST /mode.
+  const [switchMode, setSwitchMode] = useState('preset');
+  // Modo de operacao escolhido por SW em LIVE MODE (1..6 -> id do modo).
+  // Vive aqui (nao no LiveModePanel) pra sobreviver ao toggle PRESET<->LIVE.
+  // Persistido no PRESET atual (campo sw_modes): editar marca pendente,
+  // o botao SAVE do rodape grava — igual ao card de preset.
+  const [swModes, setSwModes] = useState({});
+  const [savedSwModes, setSavedSwModes] = useState({});
+  const [swModesStatus, setSwModesStatus] = useState('idle'); // idle|saving|saved|error
+  const swModesDirty = swModesToStr(swModes) !== swModesToStr(savedSwModes);
+  // Espelha o dirty pro poll de loadBankCurrent (setInterval com closure
+  // velha) decidir se pode sobrescrever swModes ou se respeita a edicao.
+  const swModesDirtyRef = useRef(false);
+  useEffect(() => { swModesDirtyRef.current = swModesDirty; }, [swModesDirty]);
+  // Tag do preset atual ("A1"...) sempre fresca — saveSwModes grava nela.
+  const currentTagRef = useRef('A1');
+
+  // Apenas estado local — a persistencia acontece no SAVE (saveSwModes).
+  const setSwMode = (sw, modeId) =>
+    setSwModes((prev) => ({ ...prev, [sw]: modeId }));
+
+  // Grava os 6 sw_modes do preset atual. Acionado pelo botao SAVE do
+  // rodape quando switchMode === 'live'. Em preview/offline o POST falha
+  // e cai no catch (status 'error') — mesmo padrao do setDeviceSwitchMode.
+  const saveSwModes = async () => {
+    setSwModesStatus('saving');
+    try {
+      const body = new URLSearchParams();
+      body.set('sw_modes', swModesToStr(swModes));
+      await apiCall('POST',
+        `/bank/preset?bank=${encodeURIComponent(currentTagRef.current)}`, body);
+      setSavedSwModes(swModes);
+      setSwModesStatus('saved');
+      setTimeout(() => setSwModesStatus((s) => (s === 'saved' ? 'idle' : s)), 1200);
+    } catch {
+      setSwModesStatus('error');
+      setTimeout(() => setSwModesStatus((s) => (s === 'error' ? 'idle' : s)), 1400);
+    }
+  };
 
   const [wifiStatus, setWifiStatus] = useState(null);
   const [wifiNetworks, setWifiNetworks] = useState([]);
@@ -2479,10 +2781,25 @@ function App() {
   const loadBankCurrent = async () => {
     try {
       const bank = await apiCall('GET', '/bank/current');
-      setBankLetterIndex(Number(bank.bank_letter_index) || 0);
-      setPresetNumber(Number(bank.preset_number) || 1);
+      const li = Number(bank.bank_letter_index) || 0;
+      const pn = Number(bank.preset_number) || 1;
+      setBankLetterIndex(li);
+      setPresetNumber(pn);
+      currentTagRef.current = `${String.fromCharCode(65 + li)}${pn}`;
       setBankData(bank.data || '');
       setBankDisplayName(bank.meta?.name || '');
+      // Sincroniza o modo com o hardware — cobre o botao fisico LIVE.
+      if (typeof bank.switch_mode !== 'undefined') {
+        setSwitchMode(Number(bank.switch_mode) === 1 ? 'live' : 'preset');
+      }
+      // sw_modes do preset atual. Pulado se ha edicao pendente (dirty),
+      // senao o poll sobrescreveria o que o usuario ainda nao salvou.
+      if (typeof bank.meta?.sw_modes !== 'undefined' &&
+          !swModesDirtyRef.current) {
+        const loaded = parseSwModesStr(bank.meta.sw_modes);
+        setSwModes(loaded);
+        setSavedSwModes(loaded);
+      }
     } catch {/* preview */}
   };
   useEffect(() => { if (page === 'preset_config') loadBankCurrent(); }, [page, usbState]);
@@ -2502,10 +2819,19 @@ function App() {
     try {
       const tag = `${String.fromCharCode(65 + li)}${pn}`;
       const bank = await apiCall('POST', `/bank/current?bank=${encodeURIComponent(tag)}`);
-      setBankLetterIndex(Number(bank.bank_letter_index) || li);
-      setPresetNumber(Number(bank.preset_number) || pn);
+      const eli = Number(bank.bank_letter_index) || li;
+      const epn = Number(bank.preset_number) || pn;
+      setBankLetterIndex(eli);
+      setPresetNumber(epn);
+      currentTagRef.current = `${String.fromCharCode(65 + eli)}${epn}`;
       setBankData(bank.data || '');
       setBankDisplayName(bank.meta?.name || '');
+      // Troca de banco e acao explicita do usuario: carrega os sw_modes
+      // do novo preset como estado atual E baseline (descarta edicao nao
+      // salva do preset anterior).
+      const loadedSwModes = parseSwModesStr(bank.meta?.sw_modes);
+      setSwModes(loadedSwModes);
+      setSavedSwModes(loadedSwModes);
       setBankState('idle');
     } catch {
       // Update local state in preview mode
@@ -2516,6 +2842,19 @@ function App() {
     }
   };
   const nextBankLetter = () => selectBank((bankLetterIndex + 1) % 5, presetNumber);
+
+  // Alterna o modo PRESET/LIVE no hardware. Atualiza local na hora
+  // (feedback instantaneo) e reconcilia com a resposta do firmware —
+  // assim o poll de /bank/current nao reverte o estado por uma janela.
+  const setDeviceSwitchMode = async (mode) => {
+    setSwitchMode(mode);
+    try {
+      const resp = await apiCall('POST', `/mode?value=${mode === 'live' ? 1 : 0}`);
+      if (resp && typeof resp.switch_mode !== 'undefined') {
+        setSwitchMode(Number(resp.switch_mode) === 1 ? 'live' : 'preset');
+      }
+    } catch {/* preview/offline — mantem o estado local */}
+  };
 
   // ── WIFI ──
   const loadWifiStatus = async () => {
@@ -2617,10 +2956,33 @@ function App() {
     }
   };
 
+  // Cor dinamica do "tile ativo" — baseada no preset/banco selecionado.
+  // Aplicada como CSS variable --tile-color no root .bf-screen pra que TODOS
+  // os botoes/tabs com estado ativo (is-active, is-on, is-running) usem
+  // automaticamente, sem cada componente precisar saber dessa logica.
+  // Modo POR LETRA → cor da letra ativa.
+  // Modo POR SWITCH → cor do switch correspondente ao preset ativo.
+  const currentTileColor = (() => {
+    const safeColor = (idx, fallback = '#ff7a1a') =>
+      (LED_COLORS[idx] && LED_COLORS[idx].hex) || fallback;
+    const letterIdx = (letterLedColors && letterLedColors[bankLetterIndex]) ?? 7;
+    if (ledColorMode === 'numeros' && switchLedColors) {
+      const swIdx = switchLedColors[presetNumber - 1];
+      return safeColor(swIdx, safeColor(letterIdx));
+    }
+    return safeColor(letterIdx);
+  })();
 
   return (
     <div className="phone-frame">
-      <div className="bf-screen">
+      <div className="bf-screen" style={{
+        '--tile-color': currentTileColor,
+        // Sobrescreve --accent com a cor do banco/preset ativo. Dessa forma
+        // TODOS os elementos que usam var(--accent) hardcoded (botoes
+        // ativos, sliders, switches, focus, etc.) acompanham a cor do tile
+        // sem precisar mexer em cada CSS rule individualmente.
+        '--accent': currentTileColor,
+      }}>
         {page === 'preset_config' && (
           <PagePresetConfig
             bankLetterIndex={bankLetterIndex}
@@ -2638,9 +3000,10 @@ function App() {
             onToggleConnectionMode={toggleConnectionMode}
             onDisplayNameChange={setBankDisplayName}
             onRegisterPresetSave={registerPresetSave}
-            ledColorMode={ledColorMode}
-            letterLedColors={letterLedColors}
-            switchLedColors={switchLedColors}
+            switchMode={switchMode}
+            onSetSwitchMode={setDeviceSwitchMode}
+            swModes={swModes}
+            onSetSwMode={setSwMode}
           />
         )}
         {page === 'global_config' && (
@@ -2683,10 +3046,16 @@ function App() {
         <TabBar
           page={page}
           setPage={setPage}
-          saveState={page === 'preset_config' ? presetSaveStatus : saveState}
-          onSave={page === 'preset_config'
-            ? () => { const h = presetSaveRef.current; if (h && h.save) h.save(); }
-            : saveGlobalConfig}
+          saveState={
+            page !== 'preset_config' ? saveState
+              : switchMode === 'live'
+                ? (swModesStatus === 'idle' && swModesDirty ? 'dirty' : swModesStatus)
+                : presetSaveStatus}
+          onSave={
+            page !== 'preset_config' ? saveGlobalConfig
+              : switchMode === 'live'
+                ? saveSwModes
+                : () => { const h = presetSaveRef.current; if (h && h.save) h.save(); }}
         />
       </div>
     </div>
