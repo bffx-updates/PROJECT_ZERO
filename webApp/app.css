@@ -1200,10 +1200,6 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
      ocupando a largura toda em vez de ficar fixos em 84px. */
   grid-template-columns: repeat(4, 1fr);
 }
-.bf-icon-tabs.cols-4 .bf-icon-tab svg {
-  width: 38px;
-  height: 38px;
-}
 .bf-icon-tabs.cols-4 .bf-icon-tab span {
   font-size: 11px;
 }
@@ -1222,7 +1218,7 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
   transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
 }
 .bf-icon-tab svg {
-  width: 30px; height: 30px;
+  width: 38px; height: 38px;
   stroke: currentColor;
   flex: 0 0 auto;
 }
