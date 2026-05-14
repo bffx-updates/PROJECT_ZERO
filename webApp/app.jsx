@@ -1177,7 +1177,7 @@ function PageHeader({
             <path d="M8.5 17.5 Q12 14 15.5 17.5" />
             <circle cx="12" cy="21" r="1.4" fill="currentColor" />
           </svg>
-          <span className="bf-conn-mode-label">WIFI · {connectionMode || 'AP'}</span>
+          <span className="bf-conn-mode-label">{connectionMode || 'AP'}</span>
         </button>
 
         <button

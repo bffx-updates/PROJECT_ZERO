@@ -105,7 +105,7 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
   color: #9c9ca6;
   font-family: var(--font-mono);
   transition: color 0.15s ease, border-color 0.15s ease, box-shadow 0.2s ease;
-  min-width: 96px;
+  min-width: 72px;
 }
 .bf-conn-mode-ico {
   width: 16px;
