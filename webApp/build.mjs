@@ -16,6 +16,7 @@
 import { build, context } from 'esbuild';
 import { mkdir, copyFile, readFile, writeFile, stat, readdir, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -112,11 +113,27 @@ async function buildCSS() {
 // Service worker pra producao. APP_SHELL reflete os arquivos que o build
 // emite em data/ — diferente de webApp/sw.js (dev), que cita app.jsx e
 // vendor/* nao existentes em prod. Cross-origin (API HTTP do dispositivo)
-// continua passthrough. Bumpe CACHE_NAME quando mudar APP_SHELL ou a
-// estrategia de fetch — o handler de activate apaga caches antigos.
+// continua passthrough.
+//
+// CACHE_NAME e versionado automaticamente pelo hash do conteudo emitido
+// (index.html + app.js + app.css + manifest). Sempre que o app muda, o
+// hash muda -> o SW novo tem CACHE_NAME novo -> o activate apaga o cache
+// antigo e o cliente recebe a versao atual. Sem isso, o SW e cache-first
+// e serviria a versao velha pra sempre, mesmo depois de atualizar o
+// littlefs.bin no ESP32. Roda DEPOIS de buildHTML/CSS/JS (precisa dos
+// arquivos ja escritos em data/ pra fazer o hash).
 async function buildSW() {
+  const hashParts = [];
+  for (const name of ['index.html', 'app.js', 'app.css', 'manifest.webmanifest']) {
+    const p = join(DATA_DIR, name);
+    if (existsSync(p)) hashParts.push(await readFile(p));
+  }
+  const cacheVersion = createHash('sha256')
+    .update(Buffer.concat(hashParts))
+    .digest('hex')
+    .slice(0, 12);
   const sw = `// BFMIDI Editor — Service Worker (gerado por webApp/build.mjs).
-const CACHE_NAME = 'bfmidi-prod-v1';
+const CACHE_NAME = 'bfmidi-prod-${cacheVersion}';
 const APP_SHELL = [
   './',
   './index.html',
@@ -252,7 +269,10 @@ async function report() {
 
 async function main() {
   await ensureCleanData();
-  await Promise.all([buildHTML(), buildCSS(), buildJS(), buildSW(), copyPwaAssets()]);
+  await Promise.all([buildHTML(), buildCSS(), buildJS(), copyPwaAssets()]);
+  // buildSW depois: versiona o CACHE_NAME pelo hash dos arquivos ja
+  // emitidos em data/.
+  await buildSW();
   if (!watch) await report();
 }
 

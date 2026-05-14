@@ -459,7 +459,7 @@ function FootswitchArc({ label, colorId, onChange }) {
 const DEFAULT_PRESET_META = () => ({
   name: '',
   bank: 0,            // MSB+LSB combinado, 0..16383
-  channel: 1,         // 0 = MUTE, 1..16
+  channel: 0,         // 0 = MUTE/OFF (padrao), 1..16
   nameColorId: 4,     // SOLID Branco (DISPLAY_PALETTE)
   nameBorderColorId: 0, // TRANSPARENT (sem contorno por padrao)
   bgColorId: 0,       // TRANSPARENT (display fica preto na tela cheia)
