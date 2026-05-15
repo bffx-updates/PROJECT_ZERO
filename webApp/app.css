@@ -979,6 +979,73 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
   box-shadow: 0 0 0 1px var(--accent-glow), 0 8px 24px -10px var(--accent-glow);
 }
 
+/* MACROS — cada slot e um cartao com cabecalho horizontal (numero + SEND
+   CC/PC + canal) e uma linha de campos abaixo. Mais compacto que
+   stackear cada controle. */
+.bf-sw-macros .bf-macros-slot {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  margin: 4px 0;
+  background: linear-gradient(180deg, #16161a 0%, #101013 100%);
+  border: 1px solid var(--hair);
+  border-radius: 12px;
+}
+.bf-sw-macros .bf-macros-slot-head {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1.1fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+}
+.bf-sw-macros .bf-macros-slot-idx {
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--muted);
+  text-align: center;
+}
+/* Toggle SEND CC / SEND PC — botao unico que alterna. CC = laranja
+   accent (igual is-active do .bf-input-num); PC = azul. Visual diferente
+   pra ficar facil distinguir o tipo de mensagem. */
+.bf-sw-macros .bf-macros-slot-type {
+  height: 40px;
+  min-height: 40px;
+  font-size: 11px;
+  letter-spacing: 0.16em;
+}
+.bf-sw-macros .bf-macros-slot-type.is-cc {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent-glow);
+}
+.bf-sw-macros .bf-macros-slot-type.is-pc {
+  background: color-mix(in srgb, #3aa0ff 18%, transparent);
+  border-color: #3aa0ff;
+  color: #3aa0ff;
+  box-shadow: 0 0 0 1px color-mix(in srgb, #3aa0ff 40%, transparent);
+}
+.bf-sw-macros .bf-macros-slot-ch .bf-select { height: 40px; }
+/* Campos do slot (CC#/ON/OFF ou PC ON/PC OFF) em uma linha so. */
+.bf-sw-macros .bf-macros-slot-fields {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+.bf-sw-macros .bf-macros-slot-fields.is-pc {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+/* START ON/OFF disabled quando AGUARDA LIVE (at_preset=0) */
+.bf-sw-macros .bf-input-num[disabled] {
+  opacity: 0.35;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+.bf-sw-macros .bf-macros-slot-fields .bf-input,
+.bf-sw-macros .bf-macros-slot-fields .bf-select {
+  min-height: 40px;
+}
+
 /* STOMP 2 (fx2): toggle segmentado CLICK CURTO / CLICK LONGO no topo, e
    abaixo a secao ativa (mesmo layout do STOMP 1 / .bf-sw-fx1). Mostra so
    uma secao por vez pra nao alongar o card. */
