@@ -1254,6 +1254,10 @@ function swModesToStr(obj) {
 // reusa as mesmas chaves do fx1 (num/ch/custom/on/off/start/color); a
 // secao B (click longo) usa as chaves com sufixo 2 (num2/ch2/custom2/
 // on2/off2/start2/color2). Cada secao alterna um CC proprio.
+//
+// STOMP 3 (fx3): tres secoes — A (click curto, sem sufixo), B (click
+// longo, sufixo 2), C (reclick / duplo-click, sufixo 3). Cada secao
+// alterna um CC e acende seu pixel: A=pixel1, B=pixel2, C=pixel3.
 function DEFAULT_SW_PARAMS(modeId) {
   if (modeId === 'fx1') {
     return { num: 0, ch: 0, custom: 0, on: 127, off: 0, start: 0, color: 1 };
@@ -1262,6 +1266,13 @@ function DEFAULT_SW_PARAMS(modeId) {
     return {
       num: 0, ch: 0, custom: 0, on: 127, off: 0, start: 0, color: 1,
       num2: 0, ch2: 0, custom2: 0, on2: 127, off2: 0, start2: 0, color2: 1,
+    };
+  }
+  if (modeId === 'fx3') {
+    return {
+      num: 0, ch: 0, custom: 0, on: 127, off: 0, start: 0, color: 1,
+      num2: 0, ch2: 0, custom2: 0, on2: 127, off2: 0, start2: 0, color2: 1,
+      num3: 0, ch3: 0, custom3: 0, on3: 127, off3: 0, start3: 0, color3: 1,
     };
   }
   return {};
@@ -1303,9 +1314,9 @@ function swParamsToApiBody(fields) {
 }
 
 // Monta um evento de press de SW em LIVE MODE pro MONITOR. section: 0 =
-// click curto (chaves sem sufixo), 1 = click longo (chaves com sufixo 2).
-// nowOn: estado novo apos o press. Retorna null se o modo do SW nao
-// produz CC (mute, ou modos ainda nao implementados).
+// click curto (chaves sem sufixo), 1 = click longo (sufixo 2), 2 = reclick
+// do STOMP 3 (sufixo 3). nowOn: estado novo apos o press. Retorna null se
+// o modo do SW nao produz CC naquela secao (mute, fx1 section>0, etc.).
 function buildLivePressEvent(sw, section, nowOn, savedSwModes, savedSwParams) {
   const id = (savedSwModes && savedSwModes[sw]) || 'mute';
   const userParams = savedSwParams && savedSwParams[sw] && savedSwParams[sw][id];
@@ -1315,7 +1326,7 @@ function buildLivePressEvent(sw, section, nowOn, savedSwModes, savedSwParams) {
     return { sw, sectionLabel: '', cc: Number(p.num), ch: Number(p.ch),
              value, on: nowOn };
   }
-  if (id === 'fx2') {
+  if (id === 'fx2' && (section === 0 || section === 1)) {
     const p = { ...DEFAULT_SW_PARAMS('fx2'), ...(userParams || {}) };
     if (section === 0) {
       const value = p.custom === 1 ? (nowOn ? p.on : p.off) : (nowOn ? 127 : 0);
@@ -1324,6 +1335,22 @@ function buildLivePressEvent(sw, section, nowOn, savedSwModes, savedSwParams) {
     }
     const value = p.custom2 === 1 ? (nowOn ? p.on2 : p.off2) : (nowOn ? 127 : 0);
     return { sw, sectionLabel: 'LONGO', cc: Number(p.num2), ch: Number(p.ch2),
+             value, on: nowOn };
+  }
+  if (id === 'fx3') {
+    const p = { ...DEFAULT_SW_PARAMS('fx3'), ...(userParams || {}) };
+    if (section === 0) {
+      const value = p.custom === 1 ? (nowOn ? p.on : p.off) : (nowOn ? 127 : 0);
+      return { sw, sectionLabel: 'CURTO', cc: Number(p.num), ch: Number(p.ch),
+               value, on: nowOn };
+    }
+    if (section === 1) {
+      const value = p.custom2 === 1 ? (nowOn ? p.on2 : p.off2) : (nowOn ? 127 : 0);
+      return { sw, sectionLabel: 'LONGO', cc: Number(p.num2), ch: Number(p.ch2),
+               value, on: nowOn };
+    }
+    const value = p.custom3 === 1 ? (nowOn ? p.on3 : p.off3) : (nowOn ? 127 : 0);
+    return { sw, sectionLabel: 'RECLICK', cc: Number(p.num3), ch: Number(p.ch3),
              value, on: nowOn };
   }
   return null;
@@ -1571,12 +1598,15 @@ function SwFx1Editor({ sw, params, onChange, ledPreviewLive, liveOn }) {
   );
 }
 
-// Uma secao do editor STOMP 2 (fx2) — mesma estrutura do SwFx1Editor, mas
+// Uma secao do editor STOMP 2/3 — mesma estrutura do SwFx1Editor, mas
 // parametrizada pelo `section`: 0 = click curto (chaves num/ch/...), 1 =
-// click longo (chaves num2/ch2/...). O `onChange` recebido ja aponta pro
-// modo fx2 do SW; aqui so prefixamos as chaves da secao certa.
-function SwFx2Section({ sw, section, label, params, onChange, ledPreviewLive, liveOn }) {
-  const suf = section === 1 ? '2' : '';
+// click longo (chaves num2/ch2/...), 2 = reclick/duplo-click (chaves
+// num3/ch3/...). O `onChange` recebido ja aponta pro modo do SW; aqui so
+// prefixamos as chaves. `litArcsOn` define quais arcos do FootswitchArc
+// acendem quando testOn (mapeamento do pixel no firmware).
+function SwStompSection({ sw, section, label, litArcsOn,
+                          params, onChange, ledPreviewLive, liveOn }) {
+  const suf = section === 0 ? '' : section === 1 ? '2' : '3';
   const k = (base) => base + suf;
   const num = params[k('num')];
   const ch = params[k('ch')];
@@ -1612,14 +1642,10 @@ function SwFx2Section({ sw, section, label, params, onChange, ledPreviewLive, li
     }
     try { await apiCall('POST', '/midi/cc', body); } catch {/* preview/offline */}
   };
-  // Preview do LED (FootswitchArc) — espelha o mapeamento de pixels do
-  // firmware no STOMP 2: secao A (CLICK CURTO) usa os pixels externos
-  // (arcos superiores direito = indice 2 e esquerdo = indice 1); secao B
-  // (CLICK LONGO) usa o pixel central (arco inferior = indice 0). testOn
-  // acende, testOff apaga — sem preview-live (o firmware tambem nao faz
-  // preview pro fx2, ver LED_STRIP.h).
-  const sectionLitArcs = section === 1 ? [0] : [1, 2];
-  const ledLitArcs = testOn ? sectionLitArcs : [];
+  // Preview do LED (FootswitchArc): testOn acende os arcos definidos em
+  // `litArcsOn` (o parent decide o mapeamento conforme o modo); testOff
+  // apaga tudo. Sem preview-live (espelha o firmware, ver LED_STRIP.h).
+  const ledLitArcs = testOn ? (litArcsOn || []) : [];
   const ledDimmed = false;
   return (
     <div className="bf-sw-fx1">
@@ -1741,6 +1767,12 @@ function SwFx2Section({ sw, section, label, params, onChange, ledPreviewLive, li
 // qual secao esta visivel. Edicao local — persistencia no SAVE do rodape.
 function SwFx2Editor({ sw, params, onChange, ledPreviewLive, liveOn }) {
   const [activeSection, setActiveSection] = useState(0);
+  // Mapeamento pixel -> arco do FootswitchArc:
+  //   pixel 1 e 3 (firmware) = arcos superiores esquerdo (1) e direito (2)
+  //   pixel 2 (firmware central) = arco inferior (0)
+  const litArcsBySection = [[1, 2], [0]];
+  // So a secao A recebe o estado live (vem de sw_live_on); B cai no `start`.
+  const liveBySection = [liveOn, undefined];
   return (
     <div className="bf-sw-fx2">
       <div className="bf-seg bf-sw-fx2-tabs" role="tablist"
@@ -1760,12 +1792,52 @@ function SwFx2Editor({ sw, params, onChange, ledPreviewLive, liveOn }) {
           onClick={() => setActiveSection(1)}
         >CLICK LONGO</button>
       </div>
-      <SwFx2Section
+      <SwStompSection
         key={activeSection}
         sw={sw} section={activeSection}
+        litArcsOn={litArcsBySection[activeSection]}
         params={params} onChange={onChange}
         ledPreviewLive={ledPreviewLive}
-        liveOn={activeSection === 0 ? liveOn : undefined}
+        liveOn={liveBySection[activeSection]}
+      />
+    </div>
+  );
+}
+
+// Editor de parametros do modo STOMP 3 (fx3). Tres secoes: A (click curto)
+// no pixel 1, B (click longo) no pixel 2, C (reclick / duplo-click) no
+// pixel 3. Cada secao usa um CC proprio. Toggle CLICK CURTO / CLICK LONGO
+// / RECLICK alterna qual secao esta visivel.
+function SwFx3Editor({ sw, params, onChange, ledPreviewLive, liveOn }) {
+  const [activeSection, setActiveSection] = useState(0);
+  // Pixel -> arco (FootswitchArc): pixel 1 = arco 1 (sup esq), pixel 2 =
+  // arco 0 (inferior), pixel 3 = arco 2 (sup dir).
+  const litArcsBySection = [[1], [0], [2]];
+  // So a secao A recebe o estado live; B e C caem no `start`/`start2`/`start3`.
+  const liveBySection = [liveOn, undefined, undefined];
+  const labels = ['CLICK CURTO', 'CLICK LONGO', 'RECLICK'];
+  return (
+    <div className="bf-sw-fx2">
+      <div className="bf-seg bf-sw-fx2-tabs" role="tablist"
+           aria-label="Secao do STOMP 3">
+        {labels.map((label, idx) => (
+          <button
+            key={idx}
+            type="button"
+            role="tab"
+            aria-selected={activeSection === idx}
+            className={activeSection === idx ? 'is-active' : ''}
+            onClick={() => setActiveSection(idx)}
+          >{label}</button>
+        ))}
+      </div>
+      <SwStompSection
+        key={activeSection}
+        sw={sw} section={activeSection}
+        litArcsOn={litArcsBySection[activeSection]}
+        params={params} onChange={onChange}
+        ledPreviewLive={ledPreviewLive}
+        liveOn={liveBySection[activeSection]}
       />
     </div>
   );
@@ -1873,6 +1945,16 @@ function LiveModePanel({ presetCount, swModes, onSetSwMode, swParams, onSetSwPar
                   params={(swParams && swParams[selectedSw] && swParams[selectedSw].fx2)
                     || DEFAULT_SW_PARAMS('fx2')}
                   onChange={(patch) => onSetSwParam(selectedSw, 'fx2', patch)}
+                  ledPreviewLive={ledPreviewLive}
+                  liveOn={Array.isArray(swLiveOn) ? swLiveOn[selectedSw - 1] : undefined}
+                />
+              ) : modeOf(selectedSw) === 'fx3' ? (
+                <SwFx3Editor
+                  key={selectedSw}
+                  sw={selectedSw}
+                  params={(swParams && swParams[selectedSw] && swParams[selectedSw].fx3)
+                    || DEFAULT_SW_PARAMS('fx3')}
+                  onChange={(patch) => onSetSwParam(selectedSw, 'fx3', patch)}
                   ledPreviewLive={ledPreviewLive}
                   liveOn={Array.isArray(swLiveOn) ? swLiveOn[selectedSw - 1] : undefined}
                 />
@@ -3207,6 +3289,9 @@ function App() {
   // Estado da secao B (click longo do STOMP 2) — espelha swActive.liveOn2
   // do firmware. Separado pra o poll detectar press do click longo.
   const [swLiveOn2, setSwLiveOn2] = useState([false, false, false, false, false, false]);
+  // Estado da secao C (reclick / duplo-click do STOMP 3) — espelha
+  // swActive.liveOn3 do firmware.
+  const [swLiveOn3, setSwLiveOn3] = useState([false, false, false, false, false, false]);
   // Log de presses de SW em LIVE MODE — cada flip em swLiveOn / swLiveOn2
   // entre polls vira uma entrada. Mostrado no MONITOR (visivel em PRESET
   // e LIVE). Limpa na troca de preset. Cap em 50 entradas.
@@ -3222,12 +3307,14 @@ function App() {
   // Refs pra detectar press dentro do setInterval (closure velha).
   const swLiveOnRef = useRef([false, false, false, false, false, false]);
   const swLiveOn2Ref = useRef([false, false, false, false, false, false]);
+  const swLiveOn3Ref = useRef([false, false, false, false, false, false]);
   const switchModeRef = useRef('preset');
   const savedSwModesRef = useRef({});
   const savedSwParamsRef = useRef({});
   const liveEventsTagRef = useRef('');
   useEffect(() => { swLiveOnRef.current = swLiveOn; }, [swLiveOn]);
   useEffect(() => { swLiveOn2Ref.current = swLiveOn2; }, [swLiveOn2]);
+  useEffect(() => { swLiveOn3Ref.current = swLiveOn3; }, [swLiveOn3]);
   useEffect(() => { switchModeRef.current = switchMode; }, [switchMode]);
   // Parametros por SW/modo do preset atual (ver parseSwParamsObj). Mesma
   // mecanica do swModes: editar marca pendente, o SAVE do rodape grava.
@@ -3269,6 +3356,12 @@ function App() {
         const p = { ...DEFAULT_SW_PARAMS('fx2'), ...(params || {}) };
         return `${mode.sub} CC ${Number(p.num)} - CH ${fmtCh(Number(p.ch))}` +
                ` / CC ${Number(p.num2)} - CH ${fmtCh(Number(p.ch2))}`;
+      }
+      if (id === 'fx3') {
+        const p = { ...DEFAULT_SW_PARAMS('fx3'), ...(params || {}) };
+        return `${mode.sub} CC ${Number(p.num)} - CH ${fmtCh(Number(p.ch))}` +
+               ` / CC ${Number(p.num2)} - CH ${fmtCh(Number(p.ch2))}` +
+               ` / CC ${Number(p.num3)} - CH ${fmtCh(Number(p.ch3))}`;
       }
       return mode.sub;
     });
@@ -3542,14 +3635,18 @@ function App() {
       const newLiveOn2 = Array.isArray(bank.sw_live_on2)
         ? Array.from({ length: 6 }, (_, i) => Number(bank.sw_live_on2[i]) === 1)
         : null;
-      // Detecta presses em LIVE MODE: flip em swLiveOn / swLiveOn2 entre
-      // polls vira um evento pro MONITOR. So conta dentro do mesmo preset
-      // (troca de preset reseta o log e nao gera evento por initial-MIDI).
+      const newLiveOn3 = Array.isArray(bank.sw_live_on3)
+        ? Array.from({ length: 6 }, (_, i) => Number(bank.sw_live_on3[i]) === 1)
+        : null;
+      // Detecta presses em LIVE MODE: flip em swLiveOn / swLiveOn2 /
+      // swLiveOn3 entre polls vira um evento pro MONITOR. So conta dentro
+      // do mesmo preset (troca de preset reseta o log e nao gera evento
+      // por initial-MIDI).
       if (newLiveOn && switchModeRef.current === 'live' &&
           liveEventsTagRef.current === newTag) {
         const prevA = swLiveOnRef.current;
         const prevB = swLiveOn2Ref.current;
-        const eff2 = newLiveOn2 || prevB;  // sem sw_live_on2 -> sem secao B
+        const prevC = swLiveOn3Ref.current;
         const now = new Date();
         const time = `${String(now.getHours()).padStart(2, '0')}:${
             String(now.getMinutes()).padStart(2, '0')}:${
@@ -3561,8 +3658,13 @@ function App() {
               savedSwModesRef.current, savedSwParamsRef.current);
             if (ev) newEvents.push({ ...ev, time });
           }
-          if (newLiveOn2 && eff2[i] !== prevB[i]) {
-            const ev = buildLivePressEvent(i + 1, 1, eff2[i],
+          if (newLiveOn2 && newLiveOn2[i] !== prevB[i]) {
+            const ev = buildLivePressEvent(i + 1, 1, newLiveOn2[i],
+              savedSwModesRef.current, savedSwParamsRef.current);
+            if (ev) newEvents.push({ ...ev, time });
+          }
+          if (newLiveOn3 && newLiveOn3[i] !== prevC[i]) {
+            const ev = buildLivePressEvent(i + 1, 2, newLiveOn3[i],
               savedSwModesRef.current, savedSwParamsRef.current);
             if (ev) newEvents.push({ ...ev, time });
           }
@@ -3583,6 +3685,10 @@ function App() {
       if (newLiveOn2) {
         setSwLiveOn2(newLiveOn2);
         swLiveOn2Ref.current = newLiveOn2;
+      }
+      if (newLiveOn3) {
+        setSwLiveOn3(newLiveOn3);
+        swLiveOn3Ref.current = newLiveOn3;
       }
       // sw_modes do preset atual. Pulado se ha edicao pendente (dirty),
       // senao o poll sobrescreveria o que o usuario ainda nao salvou.
@@ -3631,6 +3737,9 @@ function App() {
       }
       if (Array.isArray(bank.sw_live_on2)) {
         setSwLiveOn2(Array.from({ length: 6 }, (_, i) => Number(bank.sw_live_on2[i]) === 1));
+      }
+      if (Array.isArray(bank.sw_live_on3)) {
+        setSwLiveOn3(Array.from({ length: 6 }, (_, i) => Number(bank.sw_live_on3[i]) === 1));
       }
       // Troca explicita de preset: limpa o log de presses em LIVE MODE
       // (era do preset anterior) e fixa o novo tag pro detector.
