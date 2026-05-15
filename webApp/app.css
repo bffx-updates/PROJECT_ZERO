@@ -101,56 +101,68 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
   appearance: none;
   border: 1.5px solid #6c6c75;
   background: transparent;
-  border-radius: 14px;
-  padding: 6px 12px;
+  border-radius: 50%;
+  padding: 0;
+  width: 44px;
   height: 44px;
   display: flex;
-  flex-direction: row;
   align-items: center;
   justify-content: center;
-  gap: 6px;
   cursor: pointer;
   color: #9c9ca6;
   font-family: var(--font-mono);
   transition: color 0.15s ease, border-color 0.15s ease, box-shadow 0.2s ease;
-  min-width: 72px;
 }
 .bf-conn-mode-ico {
-  width: 16px;
-  height: 16px;
+  width: 20px;
+  height: 20px;
   flex: 0 0 auto;
   display: block;
 }
+/* Chips agora sao icon-only — o label fica oculto mas continua acessivel
+   por aria-label/title pra leitores de tela e tooltip. */
+.bf-conn-mode-label,
+.bf-conn-mode-sub { display: none; }
 .bf-conn-mode:hover { border-color: #c6c6cf; color: #e6e6ee; }
-.bf-conn-mode.is-online {
+
+/* WiFi — cor depende do modo auto-detectado:
+   offline = cinza | AP = amarelo | STA = verde. Glow externo preto. */
+.bf-conn-wifi { color: #6c6c75; border-color: #6c6c75; }
+.bf-conn-wifi.is-online.is-mode-sta {
   color: var(--success);
   border-color: var(--success);
-  box-shadow: 0 0 14px rgba(48, 209, 88, 0.45);
+  box-shadow: 0 0 12px rgba(0,0,0,0.85);
 }
-.bf-conn-mode.is-loading {
-  color: var(--text);
-  border-color: var(--hair-strong);
+.bf-conn-wifi.is-online.is-mode-ap {
+  color: #ffcc33;
+  border-color: #ffcc33;
+  box-shadow: 0 0 12px rgba(0,0,0,0.85);
+}
+.bf-conn-wifi.is-loading {
+  color: #c6c6cf;
+  border-color: #6c6c75;
   animation: bf-conn-pulse 1s ease-in-out infinite;
 }
-.bf-conn-mode.is-offline {
-  color: var(--danger, #ff6b6b);
-  border-color: var(--danger, #ff6b6b);
+.bf-conn-wifi.is-offline {
+  color: #6c6c75;
+  border-color: #6c6c75;
 }
-/* Estados USB (mesma classe agora — botao USB usa `.bf-conn-mode`) */
+
+/* USB — cinza off, azul connected. Glow externo preto. */
 .bf-conn-mode.is-connected {
-  color: var(--success);
-  border-color: var(--success);
-  box-shadow: 0 0 14px rgba(48, 209, 88, 0.45);
+  color: #3aa0ff;
+  border-color: #3aa0ff;
+  box-shadow: 0 0 12px rgba(0,0,0,0.85);
 }
 .bf-conn-mode.is-connecting {
-  color: var(--text);
-  border-color: var(--hair-strong);
+  color: #c6c6cf;
+  border-color: #6c6c75;
   animation: bf-conn-pulse 1s ease-in-out infinite;
 }
 .bf-conn-mode.is-disconnected,
 .bf-conn-mode.is-error {
-  color: var(--danger, #ff6b6b);
-  border-color: var(--danger, #ff6b6b);
+  color: #6c6c75;
+  border-color: #6c6c75;
 }
 .bf-conn-mode.is-unsupported {
   opacity: 0.35;
@@ -818,12 +830,14 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
 }
 
 /* Chip MON (MONITOR) na linha de chips do header — alterna o painel
-   MONITOR no fim da pagina. Mesma forma dos chips AP / USB, mas com a
-   variante ativa em laranja accent. */
+   MONITOR no fim da pagina. Inativo = cinza. Ativo = cor do bank atual
+   (--tile-color, mesmo accent dos botoes de preset selecionado). Glow
+   externo preto. */
+.bf-conn-mode.bf-conn-monitor { color: #6c6c75; border-color: #6c6c75; }
 .bf-conn-mode.bf-conn-monitor.is-active {
-  color: var(--accent);
-  border-color: var(--accent);
-  box-shadow: 0 0 14px var(--accent-glow);
+  color: var(--tile-color, var(--accent));
+  border-color: var(--tile-color, var(--accent));
+  box-shadow: 0 0 12px rgba(0,0,0,0.85);
 }
 
 /* ---- LIVE MODE: grade de switches SW1..SW6 + card de config ---- */

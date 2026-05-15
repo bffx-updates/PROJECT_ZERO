@@ -1134,16 +1134,15 @@ function PageHeader({
             <span className="bf-conn-mode-label">MON</span>
           </button>
         )}
-        <button
-          type="button"
-          className={'bf-conn-mode is-' + deviceState + ' is-mode-' + (connectionMode || 'AP').toLowerCase()}
-          onClick={onToggleConnectionMode}
-          aria-label={`Modo de conexao WiFi: ${connectionMode}. Toque para alternar.`}
+        <div
+          className={'bf-conn-mode bf-conn-wifi is-' + deviceState + ' is-mode-' + (connectionMode || 'STA').toLowerCase()}
+          role="status"
+          aria-label={`WiFi ${connectionMode || 'STA'} (auto-detectado): ${deviceState}`}
           title={
-            `WiFi ${connectionMode} — ` +
+            `WiFi ${connectionMode || 'STA'} (auto) — ` +
             (deviceState === 'online' ? 'CONECTADO'
               : deviceState === 'loading' ? 'CONECTANDO'
-              : 'OFFLINE — toque pra trocar pra ' + (connectionMode === 'AP' ? 'STA' : 'AP'))
+              : 'OFFLINE')
           }
         >
           <svg viewBox="0 0 24 24" className="bf-conn-mode-ico" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -1153,8 +1152,8 @@ function PageHeader({
             <path d="M8.5 17.5 Q12 14 15.5 17.5" />
             <circle cx="12" cy="21" r="1.4" fill="currentColor" />
           </svg>
-          <span className="bf-conn-mode-label">{connectionMode || 'AP'}</span>
-        </button>
+          <span className="bf-conn-mode-label">{connectionMode || 'STA'}</span>
+        </div>
 
         <button
           type="button"
@@ -3004,9 +3003,11 @@ function App() {
   const AP_HOST = 'http://192.168.4.1';
   const STA_HOST = 'http://bfmidi.local';
   const [connectionMode, setConnectionMode] = useState(() => {
+    // Preferimos STA (mesma rede de casa via mDNS). pingHttp roda
+    // auto-detect e ajusta pra AP se STA falhar.
     const saved = (typeof localStorage !== 'undefined' &&
-                   localStorage.getItem('bfmidi_connectionMode')) || 'AP';
-    return saved === 'STA' ? 'STA' : 'AP';
+                   localStorage.getItem('bfmidi_connectionMode')) || 'STA';
+    return saved === 'AP' ? 'AP' : 'STA';
   });
   const toggleConnectionMode = useCallback(() => {
     setConnectionMode((m) => (m === 'AP' ? 'STA' : 'AP'));
@@ -3401,27 +3402,30 @@ function App() {
   //   - 2 falhas seguidas antes de marcar offline (suaviza flicker de 1 ping perdido)
   //   - Mostra 'loading' (amarelo) enquanto ainda esta no limbo (1 falha so)
   const pingFailCountRef = useRef(0);
+  // Auto-detecta o modo de WiFi a cada ping: probe STA primeiro (preferido),
+  // depois AP como fallback. Atualiza connectionMode + deviceState pela
+  // resposta. Sem probe disponivel (same-origin), so reporta offline.
   const pingHttp = useCallback(async () => {
-    if (!DEVICE_API) {
-      pingFailCountRef.current = 0;
-      setDeviceState('offline');
-      return false;
-    }
-    // Tenta /ping primeiro (firmware novo, 16 bytes); se nao existir no
-    // firmware (404), cai no /config/global que sempre existiu — assim
-    // o health check nao depende do firmware estar atualizado.
-    const tryEndpoint = async (path, timeoutMs) => {
+    const probeHost = async (host) => {
+      // /ping (firmware novo, 16 bytes, ~10ms). Se 404, tenta /config/global
+      // pra cobrir firmware antigo.
       try {
-        const r = await queuedFetch(apiUrl(path), { method: 'GET' }, timeoutMs);
+        const r = await queuedFetch(`${host}/ping`,
+          { method: 'GET' }, 3000);
+        if (r.ok) return true;
+      } catch {}
+      try {
+        const r = await queuedFetch(`${host}/config/global`,
+          { method: 'GET' }, 4000);
         return r.ok;
-      } catch {
-        return false;
-      }
+      } catch { return false; }
     };
-    let ok = await tryEndpoint('/ping', 4000);
-    if (!ok) ok = await tryEndpoint('/config/global', 6000);
-    if (ok) {
+    let mode = null;
+    if (await probeHost(STA_HOST)) mode = 'STA';
+    else if (await probeHost(AP_HOST)) mode = 'AP';
+    if (mode) {
       pingFailCountRef.current = 0;
+      setConnectionMode((cur) => (cur === mode ? cur : mode));
       setDeviceState('online');
       return true;
     }
@@ -3436,13 +3440,14 @@ function App() {
     return false;
   }, []);
 
-  // Re-ping ao trocar estado de USB, modo AP/STA, e periodicamente a 10s.
+  // Re-ping ao trocar estado de USB e periodicamente a 10s. NAO depende
+  // mais de connectionMode (auto-detect atualiza ele aqui dentro).
   useEffect(() => {
     pingFailCountRef.current = 0;  // reset ao trocar contexto
     pingHttp();
     const id = setInterval(pingHttp, 10000);
     return () => clearInterval(id);
-  }, [pingHttp, usbState, connectionMode]);
+  }, [pingHttp, usbState]);
 
   // ── Carregar config global ──
   const loadGlobalConfig = useCallback(async (timeoutMs = 4000) => {
