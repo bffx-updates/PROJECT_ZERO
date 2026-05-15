@@ -674,9 +674,7 @@ function PresetEditorCard({ tag, onDisplayNameChange, onRegisterSave, savedSwMod
   const [metaByTag, setMetaByTag] = useState({});
   const [savedMetaByTag, setSavedMetaByTag] = useState({});
   const [status, setStatus] = useState('idle'); // idle | loading | saving | saved | error
-  const [activeTab, setActiveTab] = useState('midi'); // midi | display | extras | monitor
-  const [monitorEntry, setMonitorEntry] = useState(null);
-  const monitorLastSnapshotRef = useRef(null);
+  const [activeTab, setActiveTab] = useState('midi'); // midi | display | extras
   const meta = metaByTag[tag] || DEFAULT_PRESET_META();
   const savedMeta = savedMetaByTag[tag];
   const isDirty = savedMeta
@@ -728,70 +726,6 @@ function PresetEditorCard({ tag, onDisplayNameChange, onRegisterSave, savedSwMod
   useEffect(() => {
     if (onDisplayNameChange) onDisplayNameChange(meta.name || '');
   }, [meta.name, tag, onDisplayNameChange]);
-
-  // Monitor: substitui o conteudo a cada chamada de preset (mudanca de
-  // tag). Espera o saved meta carregar pra ter PC/CH corretos. Nao guarda
-  // historico — eh um monitor de conferencia do dado atual.
-  useEffect(() => {
-    const saved = savedMetaByTag[tag];
-    if (!saved) return;
-    // Snapshot do modo salvo de cada SW (1..6). SW sem modo salvo cai
-    // em 'mute'. Para modos que enviam CC, mostra tambem CC e canal.
-    const swModeList = Array.from({ length: 6 }, (_, i) => {
-      const sw = i + 1;
-      const id = (savedSwModes && savedSwModes[sw]) || 'mute';
-      const mode = SW_MODES.find((m) => m.id === id) || SW_MODES[0];
-      const params = savedSwParams && savedSwParams[sw] && savedSwParams[sw][id];
-      const fx1Params = id === 'fx1'
-        ? { ...DEFAULT_SW_PARAMS('fx1'), ...(params || {}) }
-        : params;
-      if (fx1Params &&
-          Number.isFinite(Number(fx1Params.num)) &&
-          Number.isFinite(Number(fx1Params.ch))) {
-        const channel = Number(fx1Params.ch);
-        return `${mode.sub} CC ${Number(fx1Params.num)} - CH ${channel >= 1 && channel <= 16 ? channel : 'OFF'}`;
-      }
-      return mode.sub;
-    });
-    const monitorSnapshot = JSON.stringify({
-      tag,
-      name: saved.name || tag,
-      pc: saved.bank,
-      ch: saved.channel,
-      extraPcs: saved.extraPcs,
-      extraCcs: saved.extraCcs,
-      swModeList,
-    });
-    if (monitorLastSnapshotRef.current === monitorSnapshot) return;
-    monitorLastSnapshotRef.current = monitorSnapshot;
-    const now = new Date();
-    const hh = String(now.getHours()).padStart(2, '0');
-    const mm = String(now.getMinutes()).padStart(2, '0');
-    const ss = String(now.getSeconds()).padStart(2, '0');
-    setMonitorEntry({
-      tag,
-      name: saved.name || tag,
-      pc: saved.bank,
-      ch: saved.channel,
-      time: `${hh}:${mm}:${ss}`,
-      extraPcs: (saved.extraPcs || [])
-        .map((pc, i) => ({
-          slot: i + 1,
-          ch: Number(pc.ch),
-          program: Number(pc.program),
-        }))
-        .filter((pc) => pc.ch >= 1 && pc.ch <= 16),
-      extraCcs: (saved.extraCcs || [])
-        .map((cc, i) => ({
-          slot: i + 1,
-          ch: Number(cc.ch),
-          ctrl: Number(cc.ctrl),
-          value: Number(cc.value),
-        }))
-        .filter((cc) => cc.ch >= 1 && cc.ch <= 16),
-      swModes: swModeList,
-    });
-  }, [tag, savedMetaByTag, savedSwModes, savedSwParams]);
 
   // Registra savePreset + estado pro botao SAVE global (TabBar) acionar.
   useEffect(() => {
@@ -882,22 +816,6 @@ function PresetEditorCard({ tag, onDisplayNameChange, onRegisterSave, savedSwMod
               <circle className="bf-tab-shape" cx="18" cy="8"  r="2.3" />
             </svg>
             <span>EXTRAS</span>
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeTab === 'monitor'}
-            className={'bf-preset-tab' + (activeTab === 'monitor' ? ' is-active' : '')}
-            onClick={() => setActiveTab('monitor')}
-          >
-            <svg viewBox="0 0 24 24" className="bf-tab-ico" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              {/* Terminal/console: tela com prompt > e linha */}
-              <rect className="bf-tab-shape" x="2.5" y="4" width="19" height="14" rx="1.6" />
-              <path className="bf-tab-line" d="M6 9l2 2-2 2" />
-              <path className="bf-tab-line" d="M11 13h6" />
-              <path className="bf-tab-shape" d="M9 21h6 M12 18v3" />
-            </svg>
-            <span>MONITOR</span>
           </button>
         </div>
       </div>
@@ -1174,43 +1092,6 @@ function PresetEditorCard({ tag, onDisplayNameChange, onRegisterSave, savedSwMod
           </div>
         )}
 
-        {activeTab === 'monitor' && (
-          <div className="bf-monitor">
-            {!monitorEntry ? (
-              <div className="bf-monitor-empty">Aguardando chamada de preset...</div>
-            ) : (
-              <>
-                <div key={monitorEntry.tag + '@' + monitorEntry.time} className="bf-monitor-entry">
-                  <div className="bf-monitor-line">
-                    <span className="bf-monitor-time">{monitorEntry.time}</span>
-                    <span className="bf-monitor-tag">{monitorEntry.tag}</span>
-                    <span className="bf-monitor-sep">-</span>
-                    <span className="bf-monitor-name">{monitorEntry.name}</span>
-                  </div>
-                  <div className="bf-monitor-line bf-monitor-header">
-                    HEADER = PC {monitorEntry.pc} - CH {monitorEntry.ch}
-                  </div>
-                  {(monitorEntry.extraPcs || []).map((pc) => (
-                    <div key={'pc' + pc.slot} className="bf-monitor-line bf-monitor-header">
-                      PC EXTRA {pc.slot} = PC {pc.program} - CH {pc.ch}
-                    </div>
-                  ))}
-                  {(monitorEntry.extraCcs || []).map((cc) => (
-                    <div key={'cc' + cc.slot} className="bf-monitor-line bf-monitor-header">
-                      CC EXTRA {cc.slot} = CC {cc.ctrl} - VAL {cc.value} - CH {cc.ch}
-                    </div>
-                  ))}
-                </div>
-                <div className="bf-monitor-sw-list">
-                  {(monitorEntry.swModes || []).map((label, i) => (
-                    <div key={i} className="bf-monitor-sw">SW-{i + 1} {label}</div>
-                  ))}
-                </div>
-              </>
-            )}
-          </div>
-        )}
-
         {(statusLabel || (isDirty && status === 'idle')) && (
           <p className="bf-hint">
             {statusLabel && <span className={'bf-hint-status is-' + status}>{statusLabel}</span>}
@@ -1227,11 +1108,32 @@ function PresetEditorCard({ tag, onDisplayNameChange, onRegisterSave, savedSwMod
 function PageHeader({
   title, deviceState, usbState, onToggleUsb,
   connectionMode, onToggleConnectionMode,
+  showMonitor, onToggleShowMonitor,
 }) {
   return (
     <div className="bf-header bf-header-preset">
       <h1 className="bf-title">{title}</h1>
       <div className="bf-conn-icons">
+        {typeof onToggleShowMonitor === 'function' && (
+          <button
+            type="button"
+            className={'bf-conn-mode bf-conn-monitor' + (showMonitor ? ' is-active' : '')}
+            onClick={onToggleShowMonitor}
+            aria-pressed={showMonitor}
+            aria-label={`Mostrar MONITOR MIDI: ${showMonitor ? 'ligado' : 'desligado'}`}
+            title={showMonitor ? 'Esconder o MONITOR MIDI' : 'Mostrar o MONITOR MIDI'}
+          >
+            <svg viewBox="0 0 24 24" className="bf-conn-mode-ico" fill="none"
+                 stroke="currentColor" strokeWidth="1.8"
+                 strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <rect x="2.5" y="4" width="19" height="14" rx="1.6" />
+              <path d="M6 9l2 2-2 2" />
+              <path d="M11 13h6" />
+              <path d="M9 21h6 M12 18v3" />
+            </svg>
+            <span className="bf-conn-mode-label">MON</span>
+          </button>
+        )}
         <button
           type="button"
           className={'bf-conn-mode is-' + deviceState + ' is-mode-' + (connectionMode || 'AP').toLowerCase()}
@@ -1399,6 +1301,33 @@ function swParamsToApiBody(fields) {
     body.set(k, String(fields[k]));
   }
   return body;
+}
+
+// Monta um evento de press de SW em LIVE MODE pro MONITOR. section: 0 =
+// click curto (chaves sem sufixo), 1 = click longo (chaves com sufixo 2).
+// nowOn: estado novo apos o press. Retorna null se o modo do SW nao
+// produz CC (mute, ou modos ainda nao implementados).
+function buildLivePressEvent(sw, section, nowOn, savedSwModes, savedSwParams) {
+  const id = (savedSwModes && savedSwModes[sw]) || 'mute';
+  const userParams = savedSwParams && savedSwParams[sw] && savedSwParams[sw][id];
+  if (id === 'fx1' && section === 0) {
+    const p = { ...DEFAULT_SW_PARAMS('fx1'), ...(userParams || {}) };
+    const value = p.custom === 1 ? (nowOn ? p.on : p.off) : (nowOn ? 127 : 0);
+    return { sw, sectionLabel: '', cc: Number(p.num), ch: Number(p.ch),
+             value, on: nowOn };
+  }
+  if (id === 'fx2') {
+    const p = { ...DEFAULT_SW_PARAMS('fx2'), ...(userParams || {}) };
+    if (section === 0) {
+      const value = p.custom === 1 ? (nowOn ? p.on : p.off) : (nowOn ? 127 : 0);
+      return { sw, sectionLabel: 'CURTO', cc: Number(p.num), ch: Number(p.ch),
+               value, on: nowOn };
+    }
+    const value = p.custom2 === 1 ? (nowOn ? p.on2 : p.off2) : (nowOn ? 127 : 0);
+    return { sw, sectionLabel: 'LONGO', cc: Number(p.num2), ch: Number(p.ch2),
+             value, on: nowOn };
+  }
+  return null;
 }
 
 // Footswitch (pedal de stomp) — cap arredondado + pescoco + base em 2
@@ -1684,11 +1613,15 @@ function SwFx2Section({ sw, section, label, params, onChange, ledPreviewLive, li
     }
     try { await apiCall('POST', '/midi/cc', body); } catch {/* preview/offline */}
   };
-  // Preview do LED (FootswitchArc): ligado -> 3 arcos acesos. Desligado:
-  // se o LED PREVIEW LIVE MODE estiver ON, so o arco de baixo aceso; se
-  // estiver OFF, atenua o conjunto todo.
-  const ledLitArcs = (!testOn && ledPreviewLive) ? [0] : undefined;
-  const ledDimmed = !testOn && !ledPreviewLive;
+  // Preview do LED (FootswitchArc) — espelha o mapeamento de pixels do
+  // firmware no STOMP 2: secao A (CLICK CURTO) usa os pixels externos
+  // (arcos superiores direito = indice 2 e esquerdo = indice 1); secao B
+  // (CLICK LONGO) usa o pixel central (arco inferior = indice 0). testOn
+  // acende, testOff apaga — sem preview-live (o firmware tambem nao faz
+  // preview pro fx2, ver LED_STRIP.h).
+  const sectionLitArcs = section === 1 ? [0] : [1, 2];
+  const ledLitArcs = testOn ? sectionLitArcs : [];
+  const ledDimmed = false;
   return (
     <div className="bf-sw-fx1">
       {label && <div className="bf-section-label">{label}</div>}
@@ -1803,21 +1736,37 @@ function SwFx2Section({ sw, section, label, params, onChange, ledPreviewLive, li
 }
 
 // Editor de parametros do modo STOMP 2 (fx2). Duas secoes iguais a do
-// STOMP 1: a do click curto (secao A, chaves sem sufixo) e a do click
-// longo (secao B, chaves com sufixo 2). Cada uma alterna um CC proprio.
-// Edicao local — a persistencia acontece no SAVE do rodape (saveLive).
+// STOMP 1: click curto (secao A, chaves sem sufixo) e click longo (secao
+// B, chaves com sufixo 2). Pra nao alongar demais o card, mostra so uma
+// secao por vez — um toggle segmentado CLICK CURTO / CLICK LONGO alterna
+// qual secao esta visivel. Edicao local — persistencia no SAVE do rodape.
 function SwFx2Editor({ sw, params, onChange, ledPreviewLive, liveOn }) {
+  const [activeSection, setActiveSection] = useState(0);
   return (
     <div className="bf-sw-fx2">
+      <div className="bf-seg bf-sw-fx2-tabs" role="tablist"
+           aria-label="Secao do STOMP 2">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeSection === 0}
+          className={activeSection === 0 ? 'is-active' : ''}
+          onClick={() => setActiveSection(0)}
+        >CLICK CURTO</button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeSection === 1}
+          className={activeSection === 1 ? 'is-active' : ''}
+          onClick={() => setActiveSection(1)}
+        >CLICK LONGO</button>
+      </div>
       <SwFx2Section
-        sw={sw} section={0} label="CLICK CURTO"
+        key={activeSection}
+        sw={sw} section={activeSection}
         params={params} onChange={onChange}
-        ledPreviewLive={ledPreviewLive} liveOn={liveOn}
-      />
-      <SwFx2Section
-        sw={sw} section={1} label="CLICK LONGO"
-        params={params} onChange={onChange}
-        ledPreviewLive={ledPreviewLive} liveOn={undefined}
+        ledPreviewLive={ledPreviewLive}
+        liveOn={activeSection === 0 ? liveOn : undefined}
       />
     </div>
   );
@@ -1989,9 +1938,11 @@ function PagePresetConfig({
   connectionMode, onToggleConnectionMode,
   presetCount, onNextLetter, onSelectPreset, onDisplayNameChange,
   onRegisterPresetSave,
-  switchMode, onSetSwitchMode,
+  switchMode, onSetSwitchMode, modeSync, onToggleModeSync,
+  showMonitor, onToggleShowMonitor,
   swModes, savedSwModes, onSetSwMode,
   swParams, savedSwParams, onSetSwParam, swLiveOn,
+  liveEvents, monitorEntry,
   ledPreviewLive,
 }) {
   const letters = ['A', 'B', 'C', 'D', 'E'];
@@ -2011,6 +1962,8 @@ function PagePresetConfig({
         onToggleUsb={onToggleUsb}
         connectionMode={connectionMode}
         onToggleConnectionMode={onToggleConnectionMode}
+        showMonitor={showMonitor}
+        onToggleShowMonitor={onToggleShowMonitor}
       />
 
       <div className="bf-bank-row">
@@ -2039,15 +1992,44 @@ function PagePresetConfig({
         ))}
       </div>
 
-      <div className="bf-seg bf-mode-switch">
+      <div className="bf-mode-switch-wrap">
+        <div className="bf-seg bf-mode-switch">
+          <button
+            className={switchMode === 'live' ? '' : 'is-active'}
+            onClick={() => onSetSwitchMode && onSetSwitchMode('preset')}
+          >PRESET MODE</button>
+          <button
+            className={switchMode === 'live' ? 'is-active' : ''}
+            onClick={() => onSetSwitchMode && onSetSwitchMode('live')}
+          >LIVE MODE</button>
+        </div>
         <button
-          className={switchMode === 'live' ? '' : 'is-active'}
-          onClick={() => onSetSwitchMode && onSetSwitchMode('preset')}
-        >PRESET MODE</button>
-        <button
-          className={switchMode === 'live' ? 'is-active' : ''}
-          onClick={() => onSetSwitchMode && onSetSwitchMode('live')}
-        >LIVE MODE</button>
+          type="button"
+          className={'bf-mode-sync' + (modeSync ? ' is-active' : '')}
+          onClick={() => onToggleModeSync && onToggleModeSync()}
+          aria-pressed={modeSync}
+          aria-label={`Sync PRESET/LIVE com a controladora: ${modeSync ? 'ligado' : 'desligado'}`}
+          title={modeSync
+            ? 'Sync ON — alternar aqui troca o modo na controladora'
+            : 'Sync OFF — alternar aqui nao troca o modo na controladora'}
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true" fill="none"
+               stroke="currentColor" strokeWidth="2.2"
+               strokeLinecap="round" strokeLinejoin="round">
+            {modeSync ? (
+              <>
+                <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+                <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+              </>
+            ) : (
+              <>
+                <path d="M9.5 13.5 L13 17 a4 4 0 0 1-5.66 0 a4 4 0 0 1 0-5.66 L9 9.5" />
+                <path d="M14.5 10.5 L11 7 a4 4 0 0 1 5.66 0 a4 4 0 0 1 0 5.66 L15 14.5" />
+                <path d="M4 4 L20 20" />
+              </>
+            )}
+          </svg>
+        </button>
       </div>
 
       {switchMode === 'live'
@@ -2055,6 +2037,76 @@ function PagePresetConfig({
             swParams={swParams} onSetSwParam={onSetSwParam} ledPreviewLive={ledPreviewLive}
             swLiveOn={swLiveOn} />
         : <PresetEditorCard tag={tag} onDisplayNameChange={onDisplayNameChange} onRegisterSave={onRegisterPresetSave} savedSwModes={savedSwModes} savedSwParams={savedSwParams} />}
+
+      {showMonitor && <MonitorView monitorEntry={monitorEntry} liveEvents={liveEvents} />}
+    </div>
+  );
+}
+
+// MONITOR persistente — sempre visivel no fim da pagina de preset,
+// independente do modo (PRESET / LIVE). Mostra duas secoes na mesma area:
+//   1) Snapshot do preset ativo (header MIDI + lista dos modos dos SWs).
+//   2) Log de presses de SW em LIVE MODE (eventos capturados pelo poll de
+//      /bank/current). Limpa na troca de preset.
+function MonitorView({ monitorEntry, liveEvents }) {
+  const events = Array.isArray(liveEvents) ? liveEvents : [];
+  return (
+    <div className="bf-live-monitor">
+      <div className="bf-live-monitor-head">MONITOR</div>
+      <div className="bf-live-monitor-body">
+        {!monitorEntry ? (
+          <div className="bf-monitor-empty">Aguardando chamada de preset...</div>
+        ) : (
+          <>
+            <div key={monitorEntry.tag + '@' + monitorEntry.time} className="bf-monitor-entry">
+              <div className="bf-monitor-line">
+                <span className="bf-monitor-time">{monitorEntry.time}</span>
+                <span className="bf-monitor-tag">{monitorEntry.tag}</span>
+                <span className="bf-monitor-sep">-</span>
+                <span className="bf-monitor-name">{monitorEntry.name}</span>
+              </div>
+              <div className="bf-monitor-line bf-monitor-header">
+                HEADER = PC {monitorEntry.pc} - CH {monitorEntry.ch}
+              </div>
+              {(monitorEntry.extraPcs || []).map((pc) => (
+                <div key={'pc' + pc.slot} className="bf-monitor-line bf-monitor-header">
+                  PC EXTRA {pc.slot} = PC {pc.program} - CH {pc.ch}
+                </div>
+              ))}
+              {(monitorEntry.extraCcs || []).map((cc) => (
+                <div key={'cc' + cc.slot} className="bf-monitor-line bf-monitor-header">
+                  CC EXTRA {cc.slot} = CC {cc.ctrl} - VAL {cc.value} - CH {cc.ch}
+                </div>
+              ))}
+            </div>
+            <div className="bf-monitor-sw-list">
+              {(monitorEntry.swModes || []).map((label, i) => (
+                <div key={i} className="bf-monitor-sw">SW-{i + 1} {label}</div>
+              ))}
+            </div>
+          </>
+        )}
+        <div className="bf-monitor-events-section">
+          <div className="bf-monitor-events-head">EVENTOS LIVE MODE · {events.length}</div>
+          {events.length === 0 ? (
+            <div className="bf-monitor-event bf-monitor-event-empty">
+              (sem presses capturados ainda — pressione um SW em LIVE MODE)
+            </div>
+          ) : (
+            events.map((ev, i) => {
+              const onLabel = ev.on ? 'ON' : 'OFF';
+              const secLabel = ev.sectionLabel ? ` ${ev.sectionLabel}` : '';
+              const chLabel = ev.ch >= 1 && ev.ch <= 16 ? ev.ch : 'OFF';
+              return (
+                <div key={i} className="bf-monitor-line bf-monitor-event">
+                  <span className="bf-monitor-mode">MODO LIVE</span>
+                  {' '}SW-{ev.sw}{secLabel} {onLabel} - CC {ev.cc} - VAL {ev.value} - CH {chLabel}
+                </div>
+              );
+            })
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -3131,6 +3183,17 @@ function App() {
   // Modo de operacao do hardware: 'preset' (BANK no firmware) ou 'live'.
   // Sincronizado via /bank/current (poll) e alterado via POST /mode.
   const [switchMode, setSwitchMode] = useState('preset');
+  // Sync do toggle PRESET MODE / LIVE MODE com a controladora. Quando ON
+  // (padrao), clicks no webApp postam /mode e o poll de /bank/current
+  // reflete o modo do hardware. Quando OFF, o toggle e puramente local —
+  // nenhuma das duas direcoes propaga. Botaozinho redondo no meio dos
+  // dois botoes alterna o estado.
+  const [modeSync, setModeSync] = useState(true);
+  const modeSyncRef = useRef(true);
+  useEffect(() => { modeSyncRef.current = modeSync; }, [modeSync]);
+  // Mostra ou oculta o painel MONITOR no fim da pagina de preset.
+  // Dois botaozinhos flanqueando o toggle PRESET/LIVE alternam isso.
+  const [showMonitor, setShowMonitor] = useState(true);
   // Modo de operacao escolhido por SW em LIVE MODE (1..6 -> id do modo).
   // Vive aqui (nao no LiveModePanel) pra sobreviver ao toggle PRESET<->LIVE.
   // Persistido no PRESET atual (campo sw_modes): editar marca pendente,
@@ -3140,6 +3203,31 @@ function App() {
   const [swModesStatus, setSwModesStatus] = useState('idle'); // idle|saving|saved|error
   const swModesDirty = swModesToStr(swModes) !== swModesToStr(savedSwModes);
   const [swLiveOn, setSwLiveOn] = useState([false, false, false, false, false, false]);
+  // Estado da secao B (click longo do STOMP 2) — espelha swActive.liveOn2
+  // do firmware. Separado pra o poll detectar press do click longo.
+  const [swLiveOn2, setSwLiveOn2] = useState([false, false, false, false, false, false]);
+  // Log de presses de SW em LIVE MODE — cada flip em swLiveOn / swLiveOn2
+  // entre polls vira uma entrada. Mostrado no MONITOR (visivel em PRESET
+  // e LIVE). Limpa na troca de preset. Cap em 50 entradas.
+  const [liveEvents, setLiveEvents] = useState([]);
+  // Meta salva do preset ativo (fonte do snapshot do MONITOR no nivel da
+  // pagina — sobrevive ao toggle PRESET/LIVE, diferente do savedMetaByTag
+  // do PresetEditorCard que desmonta com o card).
+  const [currentSavedMeta, setCurrentSavedMeta] = useState(null);
+  // Snapshot do preset atual exibido no MONITOR. Reconstruido pelo
+  // useEffect abaixo a partir do savedMeta + savedSwModes + savedSwParams.
+  const [monitorEntry, setMonitorEntry] = useState(null);
+  const monitorLastSnapshotRef = useRef(null);
+  // Refs pra detectar press dentro do setInterval (closure velha).
+  const swLiveOnRef = useRef([false, false, false, false, false, false]);
+  const swLiveOn2Ref = useRef([false, false, false, false, false, false]);
+  const switchModeRef = useRef('preset');
+  const savedSwModesRef = useRef({});
+  const savedSwParamsRef = useRef({});
+  const liveEventsTagRef = useRef('');
+  useEffect(() => { swLiveOnRef.current = swLiveOn; }, [swLiveOn]);
+  useEffect(() => { swLiveOn2Ref.current = swLiveOn2; }, [swLiveOn2]);
+  useEffect(() => { switchModeRef.current = switchMode; }, [switchMode]);
   // Parametros por SW/modo do preset atual (ver parseSwParamsObj). Mesma
   // mecanica do swModes: editar marca pendente, o SAVE do rodape grava.
   const [swParams, setSwParams] = useState({});
@@ -3154,6 +3242,63 @@ function App() {
   useEffect(() => { swModesDirtyRef.current = swModesDirty; }, [swModesDirty]);
   const swParamsDirtyRef = useRef(false);
   useEffect(() => { swParamsDirtyRef.current = swParamsDirty; }, [swParamsDirty]);
+  // Espelha o saved* pra o poll snapshotar config no momento do press
+  // (eventos do MONITOR ficam congelados se o usuario editar depois).
+  useEffect(() => { savedSwModesRef.current = savedSwModes; }, [savedSwModes]);
+  useEffect(() => { savedSwParamsRef.current = savedSwParams; }, [savedSwParams]);
+
+  // Constroi o snapshot do MONITOR a partir do meta salvo + modos/params
+  // dos SWs. Dedup por JSON pra so atualizar quando algo realmente muda
+  // (evita recriar o entry e bagunçar o `time` mostrado).
+  useEffect(() => {
+    if (!currentSavedMeta) return;
+    const letters = ['A', 'B', 'C', 'D', 'E'];
+    const tag = `${letters[bankLetterIndex] || 'A'}${presetNumber}`;
+    const fmtCh = (ch) => (ch >= 1 && ch <= 16 ? ch : 'OFF');
+    const swModeList = Array.from({ length: 6 }, (_, i) => {
+      const sw = i + 1;
+      const id = (savedSwModes && savedSwModes[sw]) || 'mute';
+      const mode = SW_MODES.find((m) => m.id === id) || SW_MODES[0];
+      const params = savedSwParams && savedSwParams[sw] && savedSwParams[sw][id];
+      if (id === 'fx1') {
+        const p = { ...DEFAULT_SW_PARAMS('fx1'), ...(params || {}) };
+        return `${mode.sub} CC ${Number(p.num)} - CH ${fmtCh(Number(p.ch))}`;
+      }
+      if (id === 'fx2') {
+        const p = { ...DEFAULT_SW_PARAMS('fx2'), ...(params || {}) };
+        return `${mode.sub} CC ${Number(p.num)} - CH ${fmtCh(Number(p.ch))}` +
+               ` / CC ${Number(p.num2)} - CH ${fmtCh(Number(p.ch2))}`;
+      }
+      return mode.sub;
+    });
+    const snapshot = JSON.stringify({
+      tag, name: currentSavedMeta.name || tag,
+      pc: currentSavedMeta.bank, ch: currentSavedMeta.channel,
+      extraPcs: currentSavedMeta.extraPcs,
+      extraCcs: currentSavedMeta.extraCcs,
+      swModeList,
+    });
+    if (monitorLastSnapshotRef.current === snapshot) return;
+    monitorLastSnapshotRef.current = snapshot;
+    const now = new Date();
+    const time = `${String(now.getHours()).padStart(2, '0')}:${
+        String(now.getMinutes()).padStart(2, '0')}:${
+        String(now.getSeconds()).padStart(2, '0')}`;
+    setMonitorEntry({
+      tag, name: currentSavedMeta.name || tag,
+      pc: currentSavedMeta.bank, ch: currentSavedMeta.channel,
+      time,
+      extraPcs: (currentSavedMeta.extraPcs || [])
+        .map((pc, i) => ({ slot: i + 1, ch: Number(pc.ch),
+                           program: Number(pc.program) }))
+        .filter((pc) => pc.ch >= 1 && pc.ch <= 16),
+      extraCcs: (currentSavedMeta.extraCcs || [])
+        .map((cc, i) => ({ slot: i + 1, ch: Number(cc.ch),
+                           ctrl: Number(cc.ctrl), value: Number(cc.value) }))
+        .filter((cc) => cc.ch >= 1 && cc.ch <= 16),
+      swModes: swModeList,
+    });
+  }, [currentSavedMeta, savedSwModes, savedSwParams, bankLetterIndex, presetNumber]);
   // Tag do preset atual ("A1"...) sempre fresca — saveLive grava nela.
   const currentTagRef = useRef('A1');
   // Tag pra qual swParams foi carregado — o poll re-busca quando muda.
@@ -3379,12 +3524,60 @@ function App() {
       currentTagRef.current = `${String.fromCharCode(65 + li)}${pn}`;
       setBankData(bank.data || '');
       setBankDisplayName(bank.meta?.name || '');
+      if (bank.meta) setCurrentSavedMeta(metaFromApi(bank.meta));
       // Sincroniza o modo com o hardware — cobre o botao fisico LIVE.
-      if (typeof bank.switch_mode !== 'undefined') {
+      // Com sync OFF, ignora — o toggle do webApp fica desacoplado.
+      if (typeof bank.switch_mode !== 'undefined' && modeSyncRef.current) {
         setSwitchMode(Number(bank.switch_mode) === 1 ? 'live' : 'preset');
       }
-      if (Array.isArray(bank.sw_live_on)) {
-        setSwLiveOn(Array.from({ length: 6 }, (_, i) => Number(bank.sw_live_on[i]) === 1));
+      const newTag = `${String.fromCharCode(65 + li)}${pn}`;
+      const newLiveOn = Array.isArray(bank.sw_live_on)
+        ? Array.from({ length: 6 }, (_, i) => Number(bank.sw_live_on[i]) === 1)
+        : null;
+      const newLiveOn2 = Array.isArray(bank.sw_live_on2)
+        ? Array.from({ length: 6 }, (_, i) => Number(bank.sw_live_on2[i]) === 1)
+        : null;
+      // Detecta presses em LIVE MODE: flip em swLiveOn / swLiveOn2 entre
+      // polls vira um evento pro MONITOR. So conta dentro do mesmo preset
+      // (troca de preset reseta o log e nao gera evento por initial-MIDI).
+      if (newLiveOn && switchModeRef.current === 'live' &&
+          liveEventsTagRef.current === newTag) {
+        const prevA = swLiveOnRef.current;
+        const prevB = swLiveOn2Ref.current;
+        const eff2 = newLiveOn2 || prevB;  // sem sw_live_on2 -> sem secao B
+        const now = new Date();
+        const time = `${String(now.getHours()).padStart(2, '0')}:${
+            String(now.getMinutes()).padStart(2, '0')}:${
+            String(now.getSeconds()).padStart(2, '0')}`;
+        const newEvents = [];
+        for (let i = 0; i < 6; i++) {
+          if (newLiveOn[i] !== prevA[i]) {
+            const ev = buildLivePressEvent(i + 1, 0, newLiveOn[i],
+              savedSwModesRef.current, savedSwParamsRef.current);
+            if (ev) newEvents.push({ ...ev, time });
+          }
+          if (newLiveOn2 && eff2[i] !== prevB[i]) {
+            const ev = buildLivePressEvent(i + 1, 1, eff2[i],
+              savedSwModesRef.current, savedSwParamsRef.current);
+            if (ev) newEvents.push({ ...ev, time });
+          }
+        }
+        if (newEvents.length) {
+          setLiveEvents((prev) => [...prev, ...newEvents].slice(-50));
+        }
+      }
+      // Reset do log na troca de preset (e captura do primeiro tag visto).
+      if (liveEventsTagRef.current !== newTag) {
+        if (liveEventsTagRef.current) setLiveEvents([]);
+        liveEventsTagRef.current = newTag;
+      }
+      if (newLiveOn) {
+        setSwLiveOn(newLiveOn);
+        swLiveOnRef.current = newLiveOn;  // sincronia imediata pra o proximo poll
+      }
+      if (newLiveOn2) {
+        setSwLiveOn2(newLiveOn2);
+        swLiveOn2Ref.current = newLiveOn2;
       }
       // sw_modes do preset atual. Pulado se ha edicao pendente (dirty),
       // senao o poll sobrescreveria o que o usuario ainda nao salvou.
@@ -3427,9 +3620,17 @@ function App() {
       currentTagRef.current = `${String.fromCharCode(65 + eli)}${epn}`;
       setBankData(bank.data || '');
       setBankDisplayName(bank.meta?.name || '');
+      if (bank.meta) setCurrentSavedMeta(metaFromApi(bank.meta));
       if (Array.isArray(bank.sw_live_on)) {
         setSwLiveOn(Array.from({ length: 6 }, (_, i) => Number(bank.sw_live_on[i]) === 1));
       }
+      if (Array.isArray(bank.sw_live_on2)) {
+        setSwLiveOn2(Array.from({ length: 6 }, (_, i) => Number(bank.sw_live_on2[i]) === 1));
+      }
+      // Troca explicita de preset: limpa o log de presses em LIVE MODE
+      // (era do preset anterior) e fixa o novo tag pro detector.
+      setLiveEvents([]);
+      liveEventsTagRef.current = currentTagRef.current;
       // Troca de banco e acao explicita do usuario: carrega os sw_modes
       // do novo preset como estado atual E baseline (descarta edicao nao
       // salva do preset anterior).
@@ -3453,8 +3654,10 @@ function App() {
   // Alterna o modo PRESET/LIVE no hardware. Atualiza local na hora
   // (feedback instantaneo) e reconcilia com a resposta do firmware —
   // assim o poll de /bank/current nao reverte o estado por uma janela.
+  // Com sync OFF, alterna so o estado local — nao posta /mode.
   const setDeviceSwitchMode = async (mode) => {
     setSwitchMode(mode);
+    if (!modeSync) return;
     try {
       const resp = await apiCall('POST', `/mode?value=${mode === 'live' ? 1 : 0}`);
       if (resp && typeof resp.switch_mode !== 'undefined') {
@@ -3610,6 +3813,10 @@ function App() {
             onRegisterPresetSave={registerPresetSave}
             switchMode={switchMode}
             onSetSwitchMode={setDeviceSwitchMode}
+            modeSync={modeSync}
+            onToggleModeSync={() => setModeSync((v) => !v)}
+            showMonitor={showMonitor}
+            onToggleShowMonitor={() => setShowMonitor((v) => !v)}
             swModes={swModes}
             savedSwModes={savedSwModes}
             onSetSwMode={setSwMode}
@@ -3617,6 +3824,8 @@ function App() {
             savedSwParams={savedSwParams}
             onSetSwParam={setSwParam}
             swLiveOn={swLiveOn}
+            liveEvents={liveEvents}
+            monitorEntry={monitorEntry}
             ledPreviewLive={ledPreviewLive}
           />
         )}
