@@ -946,6 +946,9 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
   column-gap: 16px;
   row-gap: 12px;
 }
+.bf-sw-fx1 .bf-extras-row.bf-extras-row-full {
+  grid-template-columns: minmax(0, 1fr);
+}
 .bf-sw-fx1 .bf-extras-cell .bf-input,
 .bf-sw-fx1 .bf-input-num {
   min-height: 58px;
@@ -1040,6 +1043,50 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
   opacity: 0.35;
   cursor: not-allowed;
   box-shadow: none;
+}
+
+/* TAP TEMPO — slot simples (so idx + CC + canal numa linha). */
+.bf-sw-tap .bf-tap-slot {
+  padding: 8px 12px;
+}
+.bf-sw-tap .bf-tap-slot-row {
+  grid-template-columns: 28px minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+  align-items: end;
+}
+.bf-sw-tap .bf-tap-slot-row .bf-macros-slot-idx {
+  align-self: end;
+  padding-bottom: 8px;
+}
+
+/* SINGLE — botao + na ponta inferior direita da pilha de slots: revela
+   o proximo slot ate totalizar 4. Esconde quando todos visiveis. */
+.bf-sw-single .bf-single-add-row {
+  display: flex;
+  justify-content: flex-end;
+  margin: 4px 2px 0;
+}
+.bf-sw-single .bf-single-add {
+  appearance: none;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid var(--hair);
+  background: linear-gradient(180deg, #1b1b20 0%, #131318 100%);
+  color: var(--muted);
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+.bf-sw-single .bf-single-add:hover {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 .bf-sw-macros .bf-macros-slot-fields .bf-input,
 .bf-sw-macros .bf-macros-slot-fields .bf-select {
@@ -2130,9 +2177,9 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
 .bf-monitor-sw-list {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 8px;
   margin-left: 16px;
-  padding: 2px 0 2px 12px;
+  padding: 4px 0 2px 12px;
   border-left: 2px solid var(--accent);
 }
 .bf-monitor-sw {
@@ -2153,12 +2200,37 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
   border-radius: 14px;
 }
 .bf-live-monitor-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   color: var(--accent);
   font-family: var(--font-mono);
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.18em;
   margin-bottom: 8px;
+}
+.bf-monitor-copy {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  padding: 3px 9px;
+  border-radius: 4px;
+  border: 1px solid var(--accent);
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.bf-monitor-copy:hover {
+  background: rgba(255, 165, 0, 0.12);
+}
+.bf-monitor-copy.is-copied {
+  border-color: #6fdc8c;
+  color: #6fdc8c;
+  background: rgba(80, 220, 120, 0.12);
 }
 .bf-live-monitor-body {
   display: flex;
@@ -2167,23 +2239,156 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
   padding-left: 12px;
   border-left: 2px solid var(--accent-glow, var(--accent));
 }
-.bf-monitor-event {
-  color: var(--muted);
-  font-size: 13px;
-  letter-spacing: 0.04em;
-  white-space: nowrap;
-  font-family: var(--font-mono);
-}
+/* Evento individual no MONITOR LIVE — header com SW + modo + secao +
+   state, e abaixo uma lista indentada com cada mensagem MIDI que foi
+   realmente disparada (CC ou PC). Cada evento e um "card" compacto
+   separado por um divisor pontilhado fino. */
 .bf-monitor-event-empty {
   color: var(--faint);
   font-style: italic;
-  white-space: normal;
+  font-size: 12px;
+  padding: 4px 0;
 }
-.bf-monitor-event .bf-monitor-mode {
-  color: var(--accent);
-  font-weight: 700;
+.bf-monitor-ev {
+  padding: 6px 0;
+}
+.bf-monitor-ev + .bf-monitor-ev {
+  border-top: 1px dashed rgba(255, 255, 255, 0.08);
+}
+.bf-monitor-ev-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 12px;
   letter-spacing: 0.06em;
-  margin: 0 6px 0 4px;
+}
+.bf-monitor-ev-sw {
+  color: var(--muted);
+  font-weight: 700;
+}
+.bf-monitor-ev-mode {
+  color: var(--accent);
+  font-weight: 800;
+  letter-spacing: 0.12em;
+}
+.bf-monitor-ev-sec {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(255, 165, 0, 0.12);
+  color: var(--accent);
+}
+.bf-monitor-ev-state {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  padding: 2px 7px;
+  border-radius: 4px;
+}
+.bf-monitor-section {
+  margin-top: 6px;
+}
+.bf-monitor-section + .bf-monitor-section {
+  margin-top: 8px;
+}
+.bf-monitor-section-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 3px;
+}
+.bf-monitor-flag {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  padding: 1px 5px;
+  border-radius: 3px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.06);
+}
+.bf-msg-when {
+  display: inline-block;
+  min-width: 28px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  padding: 1px 4px;
+  border-radius: 3px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.05);
+}
+.bf-monitor-ev-state.is-on {
+  color: #6fdc8c;
+  background: rgba(80, 220, 120, 0.12);
+}
+.bf-monitor-ev-state.is-off {
+  color: #aab0b8;
+  background: rgba(170, 176, 184, 0.08);
+}
+.bf-monitor-ev-msgs {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 5px;
+  padding-left: 16px;
+  border-left: 1px dotted rgba(255, 255, 255, 0.12);
+  margin-left: 4px;
+}
+.bf-monitor-ev-msg {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+.bf-monitor-ev-msg .bf-msg-type {
+  display: inline-block;
+  min-width: 26px;
+  font-weight: 700;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  padding: 1px 5px;
+  border-radius: 3px;
+  text-align: center;
+}
+.bf-monitor-ev-msg .bf-msg-type.is-cc {
+  background: rgba(255, 165, 0, 0.15);
+  color: var(--accent);
+}
+.bf-monitor-ev-msg .bf-msg-type.is-pc {
+  background: rgba(58, 160, 255, 0.18);
+  color: #3aa0ff;
+}
+.bf-monitor-ev-msg .bf-msg-num {
+  color: var(--text);
+  font-weight: 700;
+  min-width: 30px;
+}
+.bf-monitor-ev-msg .bf-msg-eq {
+  color: rgba(255, 255, 255, 0.3);
+  margin: 0 -2px;
+}
+.bf-monitor-ev-msg .bf-msg-val {
+  color: var(--text);
+}
+.bf-monitor-ev-msg .bf-msg-sep {
+  color: rgba(255, 255, 255, 0.25);
+  padding: 0 2px;
+}
+.bf-monitor-ev-msg .bf-msg-ch {
+  color: var(--muted);
+}
+.bf-monitor-ev-msg-empty {
+  font-style: italic;
+  color: var(--faint);
+  padding-left: 20px;
 }
 
 /* Botoes Tamanho/Negrito no DISPLAY tab batem a altura dos color bars (32px). */

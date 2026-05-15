@@ -5,8 +5,9 @@ Referência de **como cada modo de SW funciona em LIVE MODE**. Complementa o
 foco é o **comportamento**: o que cada modo faz no MIDI, no LED e no toque do
 footswitch.
 
-Implementados: **STOMP** (`fx1` unificado, com 1/2/3 seções) e **MOMENTARY**.
-Os modos `fx2` e `fx3` ficam como legado (ver §5); os demais estão no roadmap (§6).
+**Implementados:** STOMP (`fx1` unificado), MOMENTARY, MACROS, SINGLE.
+**Legados:** `fx2` e `fx3` (ocultos no picker, dados antigos ainda carregam).
+**Roadmap:** spin, ramp, favorite, tap_tempo.
 
 ---
 
@@ -20,22 +21,26 @@ arquivo do preset (`sw<N>.<modo>:<key=value|...>` em `/banks/<tag>.txt`).
 
 Dois tempos distintos:
 
-- **Na chamada do preset** (em QUALQUER modo — BANK ou LIVE): o firmware dispara
-  o MIDI inicial de cada SW (quando o modo tem estado de partida), junto do
-  header do preset.
-- **Em LIVE MODE**: o footswitch fica interativo (toque altera/dispara MIDI) e o
-  LED de cada SW reflete o estado. Em BANK MODE o SW não é interativo e não há
-  visualização por LED — só o disparo inicial aconteceu.
+- **Na chamada do preset** (em QUALQUER modo — BANK ou LIVE): o firmware
+  dispara o MIDI inicial de cada SW (quando o modo tem estado de partida),
+  junto do header do preset.
+- **Em LIVE MODE**: o footswitch fica interativo (toque altera/dispara MIDI) e
+  o LED de cada SW reflete o estado. Em BANK MODE o SW não é interativo e não
+  há visualização por LED — só o disparo inicial aconteceu.
 
-O estado de runtime de cada SW vive em `swActive` ([BANK_MEMORY.h](../BANK_MEMORY.h)),
-um cache só do preset ativo, recarregado a cada troca de preset. O estado inclui:
+O estado de runtime de cada SW vive em `swActive`
+([BANK_MEMORY.h](../BANK_MEMORY.h)), um cache só do preset ativo, recarregado a
+cada troca de preset. Campos relevantes:
 
 - `liveOn[6]` / `liveOn2[6]` / `liveOn3[6]` — on/off persistente das três seções
-  do STOMP (A=tap, B=long-press, C=duplo-click).
+  do STOMP/MACROS (A=tap, B=long-press, C=duplo-click).
 - `momentaryFlashUntilMs[6]` — deadline (em `millis()`) do flash do LED do
   MOMENTARY.
-- `momentaryPressCount[6]` — contador monotônico de pulses do MOMENTARY (uint16,
-  wraps em 65k); o webApp usa o delta entre polls pra logar cada pulse no MONITOR.
+- `momentaryPressCount[6]` / `singlePressCount[6]` — contadores monotônicos de
+  pulses do MOMENTARY/SINGLE (uint16, wraps em 65k); o webApp usa o delta entre
+  polls pra logar cada pulse no MONITOR.
+- `lastActiveSingleSw` (int8, -1 = nenhum) — qual SW em SINGLE foi o último a
+  disparar (só ele fica com o LED aceso).
 
 ---
 
@@ -44,16 +49,16 @@ um cache só do preset ativo, recarregado a cada troca de preset. O estado inclu
 | Índice | id | Nome | Status |
 |---|---|---|---|
 | 0 | `mute` | MUTE | padrão — SW silencioso, não faz nada |
-| 1 | `fx1` | STOMP | **implementado** unificado (1/2/3 seções, ver §3) |
-| 2 | `fx2` | STOMP - 2 | legado, oculto do picker (§5) |
-| 3 | `fx3` | STOMP - 3 | legado, oculto do picker (§5) |
+| 1 | `fx1` | STOMP | **implementado** unificado (1/2/3 seções, §3) |
+| 2 | `fx2` | STOMP - 2 | legado, oculto do picker (§7) |
+| 3 | `fx3` | STOMP - 3 | legado, oculto do picker (§7) |
 | 4 | `spin` | SPIN | a implementar |
 | 5 | `ramp` | RAMPA | a implementar |
 | 6 | `momentary` | MOMENTARY | **implementado** (§4) |
 | 7 | `favorite` | FAVORITE | a implementar |
-| 8 | `macros` | MACROS | a implementar |
+| 8 | `macros` | MACROS | **implementado** (§5) |
 | 9 | `tap_tempo` | TAP TEMPO | a implementar |
-| 10 | `single` | SINGLE | a implementar |
+| 10 | `single` | SINGLE | **implementado** (§6) |
 
 ---
 
@@ -61,15 +66,16 @@ um cache só do preset ativo, recarregado a cada troca de preset. O estado inclu
 
 ### 3.1 Conceito
 
-Um único modo "STOMP" que **adapta o comportamento** conforme quantas seções têm
-canal MIDI configurado. O usuário configura até 3 seções (A, B, C) no editor; o
-firmware decide em runtime se opera como STOMP clássico, dual ou trial.
+Um único modo "STOMP" que **adapta o comportamento** conforme quantas seções
+têm canal MIDI configurado. O usuário configura até 3 seções (A, B, C) no
+editor; o firmware decide em runtime se opera como STOMP clássico, dual ou
+trial.
 
 Tiers (decisão tomada em runtime a partir de `ch2` e `ch3` no blob):
 
 | Canais configurados | Tier | Apelido | Gestos / LED |
 |---|---|---|---|
-| Só A (`ch ∈ 1..16`, `ch2 = 0`, `ch3 = 0`) | 1 | STOMP clássico | tap = toggle de A; segurar = momentâneo em A. **LED**: 3 pixels na cor A. |
+| Só A (`ch ∈ 1..16`, `ch2 = 0`, `ch3 = 0`) | 1 | STOMP clássico | tap = toggle de A; segurar = momentary em A. **LED**: 3 pixels na cor A. |
 | A + B (`ch2 ∈ 1..16`, `ch3 = 0`) | 2 | DUAL STOMP | tap = toggle A (imediato no release); long-press = toggle B (permanente). **LED**: pixels externos = A, pixel central = B. |
 | A + B + C (todos válidos) | 3 | TRIAL STOMP | tap = toggle A (após janela do duplo-click); long-press = toggle B; duplo-click = toggle C. **LED**: pixel 1 = A, pixel 2 = B, pixel 3 = C. |
 
@@ -77,10 +83,6 @@ Tiers (decisão tomada em runtime a partir de `ch2` e `ch3` no blob):
 > janela do duplo-click expira (~350 ms em `doubleClickMs` de
 > [ALL_SWITCHES.h](../ALL_SWITCHES.h)). Tap fica com ~350 ms de latência. Long-press
 > e duplo-click são imediatos.
-
-Cada seção é um **toggle on/off permanente** (exceto a A no tier 1, que mantém o
-comportamento clássico do STOMP 1 — segurar inverte momentaneamente). Cada
-toggle envia um **Control Change** com o valor configurado da seção.
 
 ### 3.2 Parâmetros
 
@@ -92,8 +94,6 @@ Blob da linha `sw<N>.fx1:` — até 21 chaves, divididas em 3 seções:
 | B | `2` | long-press | `num2`, `ch2`, `custom2`, `on2`, `off2`, `start2`, `color2` |
 | C | `3` | duplo-click | `num3`, `ch3`, `custom3`, `on3`, `off3`, `start3`, `color3` |
 
-Cada conjunto tem os mesmos significados:
-
 | Key | Range | Significado |
 |---|---|---|
 | `num` | 0–127 | número do CC |
@@ -104,80 +104,48 @@ Cada conjunto tem os mesmos significados:
 | `start` | 0/1 | estado inicial na chamada do preset |
 | `color` | 0–14 | cor do LED da seção (índice em `LED_COLORS`) |
 
-**Valores efetivos do CC** (helper `swFxCcValue` em [BANK_MEMORY.h](../BANK_MEMORY.h)):
+**Valores efetivos do CC** (helper `swFxCcValue` em
+[BANK_MEMORY.h](../BANK_MEMORY.h)):
 
-- `custom = 0` → ignora `on`/`off`, usa o padrão **127** (ligado) / **0** (desligado).
+- `custom = 0` → ignora `on`/`off`, usa o padrão **127** (ligado) / **0**
+  (desligado).
 - `custom = 1` → usa os valores `on`/`off` salvos.
 
 ### 3.3 Comportamento
 
-**Na chamada do preset** (`swActiveSendInitialMidi`, [SW_BANK.h](../SW_BANK.h)):
-
-Para cada seção com `ch ∈ 1..16`, envia `CC num` no canal `ch` com o valor
-efetivo do `start` correspondente e fixa o estado interno (`liveOn[i]`,
-`liveOn2[i]`, `liveOn3[i]`). Seções com `ch = 0` ficam inertes (não enviam, não
-contam pro tier).
+**Na chamada do preset** (`swActiveSendInitialMidi`,
+[SW_BANK.h](../SW_BANK.h)): para cada seção com `ch ∈ 1..16`, envia `CC num` no
+canal `ch` com o valor efetivo de `start` e fixa o estado interno (`liveOn[i]`,
+`liveOn2[i]`, `liveOn3[i]`). Seções com `ch = 0` ficam inertes.
 
 **No toque do footswitch** (`swLiveUpdateButton` + `swLiveHandleTapSection`,
-[SW_LIVE.h](../SW_LIVE.h)) — só em LIVE MODE:
+[SW_LIVE.h](../SW_LIVE.h)) — só em LIVE MODE: conforme o tier ativo, dispara o
+gesto correspondente.
 
-Conforme o tier ativo (recalculado a cada press):
+**LED** (`ledStripShowLiveSwitches`, [LED_STRIP.h](../LED_STRIP.h)): layout
+adapta por tier; cada seção acende seu pixel na sua cor quando ON.
 
-- **Tier 1** — tap alterna A; segurar inverte A momentaneamente (release reverte).
-- **Tier 2** — tap alterna A no release; long-press alterna B (permanente).
-- **Tier 3** — tap alterna A após a janela do duplo-click; long-press alterna B;
-  duplo-click alterna C.
+### 3.4 Armazenamento + API
 
-Cada transição manda o `CC` da seção e atualiza o LED.
-
-**LED** (`ledStripShowLiveSwitches`, [LED_STRIP.h](../LED_STRIP.h)):
-
-- **Tier 1**: os 3 pixels acendem na cor `color` quando A está ON. OFF + flag
-  global `LED PREVIEW LIVE MODE` mantém só o pixel central aceso como indicador
-  ("aqui tem um STOMP").
-- **Tier 2**: pixels externos (0 e 2) = seção A na cor `color`; pixel central
-  (1) = seção B na cor `color2`. Cada um acende independentemente. Sem
-  preview-live.
-- **Tier 3**: pixel 1 (índice 0) = A; pixel 2 (índice 1) = B; pixel 3 (índice 2)
-  = C. Cores `color` / `color2` / `color3`. Cada um acende independentemente.
-  Sem preview-live.
-
-### 3.4 Persistência do estado
-
-`liveOn` / `liveOn2` / `liveOn3` são (re)fixados em `start` / `start2` / `start3`
-toda vez que o preset é chamado. Toggles feitos em LIVE persistem até a próxima
-chamada de preset — inclusive ao alternar BANK ↔ LIVE sem trocar de preset
-(alternar de modo não reseta; só a chamada do preset reseta).
-
-### 3.5 Armazenamento
-
-Linha no arquivo `/banks/<tag>.txt` (esparso — só SW configurado ganha linha):
+Linha esparsa no `/banks/<tag>.txt`:
 
 ```
-sw1.fx1:num=48|ch=1|custom=0|on=127|off=0|start=0|color=1|num2=49|ch2=1|custom2=0|on2=127|off2=0|start2=0|color2=2|num3=0|ch3=0|custom3=0|on3=127|off3=0|start3=0|color3=1
+sw1.fx1:num=48|ch=1|custom=0|on=127|off=0|start=0|color=1|num2=49|ch2=1|...
 ```
 
-Seções não usadas ficam com `chN = 0` (não atuam mesmo se houver outros campos).
-Trocar o modo de um SW **não apaga** a linha do modo anterior — os params ficam
-guardados.
+API: `GET /sw/params?bank=A1` (lista) e `POST /sw/params?bank=A1&sw=1&mode=fx1`
+(grava). Body vazio remove a linha.
 
-`SW_PARAM_BLOB_SIZE = 256` em [BANK_MEMORY.h](../BANK_MEMORY.h) (3 seções no pior
-caso ~178 chars + folga).
+`SW_PARAM_BLOB_SIZE = 384` em [BANK_MEMORY.h](../BANK_MEMORY.h) (cobre o pior
+caso de modos com slots, ver §5).
 
-### 3.6 API
+Após o save, o firmware recarrega o cache (`swActiveLoadCurrent`) e re-renderiza
+(`swLiveRenderCurrent` / `swBankRenderCurrent`) — assim a cor do LED atualiza
+no primeiro SAVE.
 
-- `GET /sw/params?bank=A1` → devolve as linhas de SW do preset.
-- `POST /sw/params?bank=A1&sw=1&mode=fx1` → grava o blob (params no body:
-  `num=48&ch=1&...`). Body vazio remove a linha. **Após o save** o firmware
-  recarrega o cache (`swActiveLoadCurrent`) e re-renderiza (`swLiveRenderCurrent`
-  / `swBankRenderCurrent`) — assim a cor do LED atualiza no primeiro SAVE.
+### 3.5 Sinalização no MONITOR
 
-No webApp o editor é o `SwStompEditor` (3 tabs CLICK CURTO / CLICK LONGO /
-RECLICK + preview de LED adaptativo ao tier).
-
-### 3.7 Sinalização no MONITOR
-
-Snapshot do preset: mostra só as seções com canal válido —
+Snapshot:
 
 ```
 SW-1 STOMP CC 48 - CH 1                              (tier 1)
@@ -185,17 +153,9 @@ SW-1 STOMP CC 48 - CH 1 / CC 49 - CH 1               (tier 2)
 SW-1 STOMP CC 48 - CH 1 / CC 49 - CH 1 / CC 50 - CH 2 (tier 3)
 ```
 
-Eventos LIVE MODE (label muda conforme o tier):
-
-| Tier | Label |
-|---|---|
-| 1 | sem label (`SW-X ON - CC ... - CH ...`) |
-| 2 | `CURTO` ou `LONGO` |
-| 3 | `CURTO`, `LONGO` ou `RECLICK` |
-
-A detecção é via flips no array `sw_live_on` / `sw_live_on2` / `sw_live_on3` do
-`/bank/current` (poll a cada 1.5 s). Toggles muito rápidos (< 1.5 s, on→off→on
-no mesmo tick) podem ser perdidos pelo poll.
+Eventos LIVE: label muda conforme o tier (`CURTO`/`LONGO`/`RECLICK` no tier 3;
+sem label no tier 1). Detecção via flips em `sw_live_on`/`sw_live_on2`/
+`sw_live_on3` no poll de `/bank/current` (1.5 s).
 
 ---
 
@@ -203,126 +163,269 @@ no mesmo tick) podem ser perdidos pelo poll.
 
 ### 4.1 Conceito
 
-Disparo único e sem estado: ao pisar, envia **ON** e em seguida **OFF** no mesmo
-CC. A soltura do footswitch é ignorada. Útil pra controles do tipo "tap" onde o
-receptor processa o evento da borda de ida (Kemper "tuner", looper play/stop por
-edge, etc.). **Só opera em LIVE MODE** — não há MIDI inicial na chamada do
-preset.
+Disparo único e sem estado: ao pisar, envia **ON** e em seguida **OFF** no
+mesmo CC. A soltura do footswitch é ignorada. Só opera em LIVE MODE — não há
+MIDI inicial na chamada do preset.
 
-### 4.2 Parâmetros
-
-Mesmas chaves da seção A do STOMP click curto. `start` fica no schema por
-consistência mas é **ignorado** (modo sem estado persistente).
+### 4.2 Parâmetros (reutiliza chaves do STOMP click curto)
 
 | Key | Range | Significado |
 |---|---|---|
 | `num` | 0–127 | número do CC |
-| `ch` | `0` = OFF, 1–16 | canal MIDI |
+| `ch` | 0/1–16 | canal MIDI (0 = OFF) |
 | `custom` | 0/1 | habilita valores ON/OFF próprios |
-| `on` | 0–127 | valor do pulse de ida (efetivo só com `custom = 1`; senão 127) |
-| `off` | 0–127 | valor do pulse de volta (efetivo só com `custom = 1`; senão 0) |
+| `on` | 0–127 | valor do pulse de ida |
+| `off` | 0–127 | valor do pulse de volta |
 | `color` | 0–14 | cor do LED no flash |
+| `start` | 0/1 | (ignorado — sem estado persistente) |
 
 ### 4.3 Comportamento
 
-**Na chamada do preset**: nada. Sem `liveOn`, sem MIDI inicial.
+**Na chamada do preset:** nada. Sem `liveOn`, sem MIDI inicial.
 
-**No press do footswitch** (`swLiveHandleMomentary` em [SW_LIVE.h](../SW_LIVE.h)):
+**No press** (`swLiveHandleMomentary` em [SW_LIVE.h](../SW_LIVE.h)):
 
-1. Envia `CC num` com o valor ON (127 ou `on`).
+1. Envia `CC num` com o valor ON.
 2. `delay(2)` — garante ordem na fila USB.
-3. Envia `CC num` com o valor OFF (0 ou `off`).
-4. Incrementa `swActive.momentaryPressCount[i]` (contador uint16, wraps em 65k).
-5. Seta `swActive.momentaryFlashUntilMs[i] = millis() + 500` — flash do LED.
+3. Envia `CC num` com o valor OFF.
+4. Incrementa `momentaryPressCount[i]`.
+5. Seta `momentaryFlashUntilMs[i] = millis() + 500` — flash de 500 ms.
 6. `swLiveRenderCurrent()` pra mostrar o flash imediatamente.
 
-A soltura do footswitch (`wasReleased`), long-press e clicks são consumidos sem
-ação.
+A soltura, long-press e clicks são consumidos sem ação.
 
 ### 4.4 LED
 
-Durante a janela de flash (500 ms a partir do press), os **3 pixels** do SW
-acendem na cor `color`. Fora do flash, o LED fica apagado (sem estado a mostrar).
+Durante o flash (500 ms a partir do press), os **3 pixels** do SW acendem na
+cor `color`. Fora do flash, fica apagado. `swLiveMomentaryFlashTick()` (no
+`swLiveUpdate`) apaga quando o deadline passa. Press novo dentro da janela
+estende o flash a partir do novo press.
 
-O `swLiveMomentaryFlashTick()` (chamado a cada iteração do `swLiveUpdate`)
-detecta deadlines expirados, zera `momentaryFlashUntilMs[i]` e re-renderiza pra
-apagar — sem overhead quando nada está piscando.
+### 4.5 MONITOR
 
-Press novo dentro da janela de 500 ms **estende** o flash a partir do novo press
-(não acumula).
-
-### 4.5 Armazenamento
-
-```
-sw1.momentary:num=64|ch=1|custom=0|on=127|off=0|start=0|color=1
-```
-
-### 4.6 API
-
-Igual ao STOMP — `POST /sw/params?bank=A1&sw=1&mode=momentary` com os params no
-body.
-
-### 4.7 Sinalização no MONITOR
-
-Snapshot: `SW-1 MOMENTARY CC 64 - CH 1`.
-
-Eventos LIVE MODE: cada pulse vira uma entrada (label `MOMENTARY`):
-
-```
-MODO LIVE SW-1 MOMENTARY ON - CC 64 - VAL 127 - CH 1
-```
-
-Como `liveOn` não é tocado, a detecção é via **delta no `sw_momentary_count`**
-exposto em `/bank/current` (uint16 com wrap). O webApp guarda a última leitura
-e, a cada poll, loga `delta` eventos (cap em 5 por poll pra evitar spam).
-Pulses muito próximos dentro do mesmo tick de 1.5 s do poll viram entradas no
-mesmo "tick" (com o mesmo timestamp).
+- Snapshot: `SW-1 MOMENTARY CC 64 - CH 1`.
+- Eventos: detecção via delta no `sw_momentary_count`, cap em 5 por poll.
 
 ---
 
-## 5. Modos legado (fx2, fx3)
+## 5. MACROS (`macros`)
+
+### 5.1 Conceito
+
+Igual ao STOMP unificado em comportamento (3 seções adaptativas com mesmo tier
+detection), mas **cada seção tem até 4 slots** de mensagens MIDI (CC ou PC).
+Cada slot tem valores ON e OFF independentes — quando a seção alterna,
+**todos** os 4 slots disparam (CC mandam ON/OFF, PC ignora a direção
+configurada como `OFF`).
+
+### 5.2 Parâmetros
+
+Por seção (sufixo '', '2', '3' para A/B/C):
+
+| Key | Tipo | Significado |
+|---|---|---|
+| `mslots[N]` | string | até 4 slots: `"t:ch:num:on:off,t:ch:num:on:off,t:ch:num:on:off,t:ch:num:on:off"` |
+| `start[N]` | 0/1 | **estado inicial** lógico da seção (ON/OFF). Sempre fixado em `liveOn[X]`, com ou sem disparo. |
+| `at_preset[N]` | 0/1 | dispara os slots na chamada do preset? Independente de `start`. |
+| `color[N]` | 0–14 | cor do LED da seção |
+
+Cada slot em `mslots[N]` (`t:ch:num:on:off`):
+
+| Sub-campo | Range | Significado |
+|---|---|---|
+| `t` | 0/1 | 0 = CC, 1 = PC |
+| `ch` | 0/1–16 | canal MIDI (0 = slot inativo) |
+| `num` | 0–127 | CC# (CC). Ignorado pra PC. |
+| `on` | -1..16383 | CC value (CC) ou PC# (PC) para ON. `-1` = OFF/pula direção |
+| `off` | -1..16383 | CC value (CC) ou PC# (PC) para OFF. `-1` = OFF/pula direção |
+
+### 5.3 Tabela de comportamento (start + at_preset)
+
+| at_preset | start | Na chamada do preset | liveOn final |
+|---|---|---|---|
+| 0 | 0 | nada (AGUARDA LIVE) | false |
+| 0 | 1 | nada (AGUARDA LIVE) | true |
+| 1 | 0 | manda valores OFF dos slots (START OFF) | false |
+| 1 | 1 | manda valores ON dos slots (START ON) | true |
+
+Os dois toggles são **independentes**: você pode definir o estado inicial sem
+disparar nada no preset (pra que o primeiro press em LIVE dispare a direção
+certa).
+
+### 5.4 LED
+
+Mesmo layout adaptativo do STOMP por tier:
+
+- tier 1 (só seção A com slot): 3 pixels na cor `color`.
+- tier 2 (A + B): externos = A, central = B.
+- tier 3 (A + B + C): pixel 1/2/3 = A/B/C.
+
+Tier detection: presença de slot com `ch ≥ 1` em cada seção
+(`macrosSectionHasAnySlot` em [BANK_MEMORY.h](../BANK_MEMORY.h)).
+
+### 5.5 Armazenamento + API
+
+Mesma API do STOMP: `/sw/params?...&mode=macros`. Storage compacto:
+
+```
+sw1.macros:mslots=0:1:48:127:0,0:0:0:127:0,...|start=0|at_preset=1|color=1|mslots2=...
+```
+
+Worst case ~340 chars no blob (3 seções × 4 slots). `SW_PARAM_BLOB_SIZE = 384`
+cobre. O buffer JSON-escapado em `swParamFileJson` (768 bytes) está em PSRAM
+porque excede o limite de 512 pra stack-buffer em handler web.
+
+### 5.6 MONITOR
+
+Snapshot:
+
+```
+SW-1 MACROS A:2↑P B:1↓                   (A: 2 slots, START ON, dispara no preset; B: 1 slot, START OFF, AGUARDA LIVE)
+```
+
+- `↑` = START ON, `↓` = START OFF, sufixo `P` = também dispara no preset.
+
+Eventos: `MODO LIVE SW-X MACROS CURTO ON (3 slots)` — uma entrada por toggle
+de seção (via flips em `sw_live_on*`).
+
+---
+
+## 6. SINGLE (`single`)
+
+### 6.1 Conceito
+
+Disparo único (sem estado on/off), mas com **até 4 slots** que disparam todos
+juntos no press. Cada slot é independente (CC ou PC, canal, valor único). Se
+houver outros SWs em SINGLE, **só o último pressionado** fica com o LED aceso
+(`lastActiveSingleSw`). Pode disparar também na chamada do preset.
+
+### 6.2 Parâmetros
+
+| Key | Tipo | Significado |
+|---|---|---|
+| `sslots` | string | até 4 slots: `"t:ch:num:val,t:ch:num:val,t:ch:num:val,t:ch:num:val"` |
+| `at_preset` | 0/1 | dispara todos os slots na chamada do preset |
+| `color` | 0–14 | cor do LED do SW |
+
+Cada slot em `sslots` (`t:ch:num:val`):
+
+| Sub-campo | Range | Significado |
+|---|---|---|
+| `t` | 0/1 | 0 = CC, 1 = PC |
+| `ch` | 0/1–16 | canal MIDI (0 = slot inativo) |
+| `num` | 0–127 | CC# (CC). Ignorado pra PC. |
+| `val` | 0–16383 | CC value (CC, 0–127) ou PC# logico (PC, 0–16383) |
+
+**Compatibilidade:** o firmware aceita dados legados do SINGLE original em
+`num`/`ch`/`on`/`pc`/`as_pc`/`start` quando `sslots` não está presente. O
+webApp migra automaticamente na exibição (slot 1 sai dos campos legados); a
+primeira save reescreve em `sslots` + `at_preset`.
+
+### 6.3 Comportamento
+
+**Na chamada do preset** (`swActiveSendInitialMidi`): se `at_preset = 1` (ou
+legacy `start = 1` em dados antigos), dispara todos os slots configurados
+(via `swLiveFireSingleSlots`) e fixa `lastActiveSingleSw = i`.
+
+**No press** (`swLiveHandleSingle` em [SW_LIVE.h](../SW_LIVE.h)):
+
+1. Itera os 4 slots. Pra cada com `ch ≥ 1`:
+   - Slot CC → `send_midi_cc(ch, num, val)`.
+   - Slot PC → `swBankSendPcLogical(ch, val)` (`val` é o PC# 0–16383).
+2. Se ao menos um slot disparou: incrementa `singlePressCount[i]`, fixa
+   `lastActiveSingleSw = i`, chama `swLiveRenderCurrent()` (LED acende).
+
+Outros SWs em SINGLE perdem o LED.
+
+### 6.4 LED
+
+Render em [LED_STRIP.h](../LED_STRIP.h): se `i == lastActiveSingleSw`, acende
+os 3 pixels do SW na cor `color`. Os demais SINGLE ficam apagados.
+
+### 6.5 MONITOR
+
+Snapshot mostra todos os slots ativos:
+
+```
+SW-1 SINGLE CC 47=127/CH1 • PC 5/CH2 (PRESET)
+```
+
+Eventos: `MODO LIVE SW-X SINGLE ON (N slots)` — detecção via delta no
+`sw_single_count`.
+
+---
+
+## 7. Modos legado (fx2, fx3)
 
 `fx2` ("STOMP - 2") e `fx3` ("STOMP - 3") existiram como modos exclusivos antes
 da unificação no `fx1`. Hoje:
 
-- **Picker** os esconde (`hidden: true` no `SW_MODES` do webApp). Não dá pra
-  criar SW novo nesses modos pela UI.
-- **Dados existentes** com mode `fx2`/`fx3` continuam carregando — o firmware
-  tem paths legados em `swLiveUpdateButton` (mode == 2 / mode == 3) que replicam
-  os tiers 2 e 3 do `fx1`.
-- **Editores legados**: `SwFx2Editor` (2 tabs) ainda monta pra SWs em modo
-  `fx2`; SWs em `fx3` usam o `SwStompEditor` unificado (chaves compatíveis).
-- **Migração** acontece naturalmente: ao trocar o modo de um SW pelo picker
-  (que só oferece STOMP/fx1), ele passa a salvar como `fx1` com os 21 campos.
+- **Picker** os esconde (`hidden: true` no `SW_MODES` do webApp).
+- **Dados existentes** com `fx2`/`fx3` continuam funcionando — firmware tem
+  paths legados (`mode == 2` / `mode == 3` em `swLiveUpdateButton`).
+- **Editores legados**: `SwFx2Editor` (2 tabs) ainda monta pra SWs em `fx2`;
+  `fx3` usa o `SwStompEditor` unificado.
 
-A linha legada não é apagada ao trocar de modo (igual a qualquer outra) — fica
-guardada no arquivo do preset por consistência.
+Ao trocar o modo de um SW pelo picker (que só oferece STOMP/fx1), salva como
+`fx1` com os 21 campos.
 
 ---
 
-## 6. Modos a implementar
-
-Comportamento ainda **não definido** — entram aqui conforme forem construídos:
+## 8. Modos a implementar
 
 - **SPIN (`spin`)** — varredura de valor (knob).
 - **RAMPA (`ramp`)** — transição gradual entre dois valores.
 - **FAVORITE (`favorite`)** — recall de um preset/estado favorito.
-- **MACROS (`macros`)** — sequência de várias mensagens MIDI.
 - **TAP TEMPO (`tap_tempo`)** — tempo por batida.
-- **SINGLE (`single`)** — disparo único.
 
-Cada modo, quando implementado, ganha aqui uma seção no formato dos §3/§4
+Cada modo, quando implementado, ganha aqui uma seção no formato dos §3–§6
 (Conceito / Parâmetros / Comportamento / LED / Armazenamento / API / MONITOR).
 
-### 6.1 Convenção — reaproveitar chaves de variável
+---
 
-Ao implementar um modo novo, **reaproveite as chaves de variável já usadas por
-outros modos** em vez de criar exclusivas. Ex.: o STOMP usa `num` (CC), `ch`
-(canal), `custom`, `on`, `off`, `start`, `color` — um modo novo que também tenha
-CC e canal deve usar `num` e `ch`, não `cc2` / `channel`. Só adicione uma chave
-nova quando não houver nada equivalente pra reaproveitar.
+## 9. Convenções de variáveis
 
-Motivo: cada SW roda **só 1 modo por vez**, então os modos não precisam de
-variáveis exclusivas. Chaves compartilhadas mantêm o blob enxuto e consistente,
-e o `SwStompSection` (componente parametrizado por prefixo de chave) já cobre
-seções de qualquer modo que reuse o schema do STOMP.
+Memória do projeto: **reaproveitar chaves entre modos**. Cada SW roda só 1
+modo por vez, então as chaves podem ser compartilhadas e o blob fica enxuto.
+
+### 9.1 Chaves canônicas
+
+| Key | Onde aparece | Semântica |
+|---|---|---|
+| `num` | STOMP, MOMENTARY, SINGLE (legado), slot CC | CC# (0–127) |
+| `ch` | STOMP, MOMENTARY, SINGLE (legado), slot | canal MIDI (0 = OFF, 1–16) |
+| `custom` | STOMP, MOMENTARY | habilita valores ON/OFF próprios |
+| `on` | STOMP, MOMENTARY, slot CC do MACROS | valor de CC no estado ON |
+| `off` | STOMP, MOMENTARY, slot CC do MACROS | valor de CC no estado OFF |
+| `start` | STOMP, MACROS | **estado inicial** lógico (ON/OFF) na chamada do preset |
+| `color` | todos os modos com LED | cor do LED (índice 0–14) |
+| `at_preset` | MACROS, SINGLE | dispara na chamada do preset? Independente de `start`. |
+| `t` | slot (MACROS, SINGLE) | tipo do slot: 0 = CC, 1 = PC |
+| `val` | slot SINGLE | valor único de disparo (CC value ou PC#) |
+| `pc` | SINGLE (legado) | PC# 0–16383 quando `as_pc = 1` |
+| `as_pc` | SINGLE (legado) | 0 = manda CC, 1 = manda PC |
+| `mslots[N]` | MACROS | string com 4 slots `t:ch:num:on:off` por seção |
+| `sslots` | SINGLE | string com 4 slots `t:ch:num:val` |
+
+Sufixos `2` e `3` indicam seções B (click longo) e C (reclick/duplo-click) em
+modos com seções múltiplas (STOMP unificado, MACROS).
+
+### 9.2 Distinção semântica importante
+
+- **`start`** = **estado inicial lógico** (ON/OFF). Sempre fixado em `liveOn`
+  no boot do preset, com ou sem disparo de MIDI.
+- **`at_preset`** = "dispara o MIDI agora?". Independente do estado inicial.
+
+O SINGLE usa `at_preset` (padrão MACROS). Dados antigos do SINGLE que tinham
+`start` significando "dispara no preset" continuam funcionando via fallback do
+firmware: se `at_preset` não existe, ele lê `start`.
+
+### 9.3 Quando criar uma chave nova
+
+Antes de inventar, olhe o blob dos modos já feitos. Use o mesmo nome pra
+conceitos equivalentes. Só adicione uma chave nova quando não houver nada
+reaproveitável.
+
+Modos com schema de "slot" (MACROS, SINGLE) reusam o helper genérico
+`SwStompSection`-like via webApp; o slot dentro do composite string segue o
+padrão `t:ch:num:...` pra ficar fácil de parsear.

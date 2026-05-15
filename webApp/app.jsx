@@ -1301,18 +1301,83 @@ function serializeMslots(slots) {
   ).join(',');
 }
 
+// SINGLE — slots mais simples que os do MACROS: um valor unico por slot
+// (sem ON/OFF). Cada slot { t, ch, num, val }.
+//   t=0 (CC): num=CC#, val=valor de CC (0..127).
+//   t=1 (PC): num ignorado, val=PC# (0..16383).
+// Storage: "t:ch:num:val,t:ch:num:val,t:ch:num:val,t:ch:num:val" (4 slots).
+function emptySingleSlot() {
+  return { t: 0, ch: 0, num: 0, val: 127 };
+}
+function emptySingleSlotsStr() {
+  return '0:0:0:127,0:0:0:127,0:0:0:127,0:0:0:127';
+}
+function parseSingleSlots(str) {
+  const out = [emptySingleSlot(), emptySingleSlot(), emptySingleSlot(), emptySingleSlot()];
+  if (typeof str !== 'string' || !str) return out;
+  const parts = str.split(',');
+  for (let i = 0; i < 4 && i < parts.length; i++) {
+    const p = (parts[i] || '').split(':');
+    if (p.length < 4) continue;
+    const t = parseInt(p[0], 10);
+    const ch = parseInt(p[1], 10);
+    const num = parseInt(p[2], 10);
+    const val = parseInt(p[3], 10);
+    out[i] = {
+      t: t === 1 ? 1 : 0,
+      ch: Number.isFinite(ch) ? clamp(ch, 0, 16) : 0,
+      num: Number.isFinite(num) ? clamp(num, 0, 16383) : 0,
+      val: Number.isFinite(val) ? clamp(val, 0, 16383) : 127,
+    };
+  }
+  return out;
+}
+function serializeSingleSlots(slots) {
+  const four = (slots || []).slice(0, 4);
+  while (four.length < 4) four.push(emptySingleSlot());
+  return four.map((s) =>
+    `${s.t|0}:${s.ch|0}:${s.num|0}:${s.val|0}`
+  ).join(',');
+}
+
+// TAP TEMPO — slots ainda mais simples: so canal e CC# (valor fixo 127
+// na hora do disparo, sem type CC/PC). Storage: "ch:num,ch:num,..." (4).
+function emptyTapSlot() { return { ch: 0, num: 0 }; }
+function emptyTapSlotsStr() { return '0:0,0:0,0:0,0:0'; }
+function parseTapSlots(str) {
+  const out = [emptyTapSlot(), emptyTapSlot(), emptyTapSlot(), emptyTapSlot()];
+  if (typeof str !== 'string' || !str) return out;
+  const parts = str.split(',');
+  for (let i = 0; i < 4 && i < parts.length; i++) {
+    const p = (parts[i] || '').split(':');
+    if (p.length < 2) continue;
+    const ch = parseInt(p[0], 10);
+    const num = parseInt(p[1], 10);
+    out[i] = {
+      ch: Number.isFinite(ch) ? clamp(ch, 0, 16) : 0,
+      num: Number.isFinite(num) ? clamp(num, 0, 127) : 0,
+    };
+  }
+  return out;
+}
+function serializeTapSlots(slots) {
+  const four = (slots || []).slice(0, 4);
+  while (four.length < 4) four.push(emptyTapSlot());
+  return four.map((s) => `${s.ch|0}:${s.num|0}`).join(',');
+}
+
 function DEFAULT_SW_PARAMS(modeId) {
   if (modeId === 'fx1' || modeId === 'fx3') {
     return {
-      num: 0, ch: 0, custom: 0, on: 127, off: 0, start: 0, color: 1,
-      num2: 0, ch2: 0, custom2: 0, on2: 127, off2: 0, start2: 0, color2: 1,
-      num3: 0, ch3: 0, custom3: 0, on3: 127, off3: 0, start3: 0, color3: 1,
+      num: 0, ch: 0, custom: 0, on: 127, off: 0, start: 0, at_preset: 1, color: 1,
+      num2: 0, ch2: 0, custom2: 0, on2: 127, off2: 0, start2: 0, at_preset2: 1, color2: 1,
+      num3: 0, ch3: 0, custom3: 0, on3: 127, off3: 0, start3: 0, at_preset3: 1, color3: 1,
     };
   }
   if (modeId === 'fx2') {
     return {
-      num: 0, ch: 0, custom: 0, on: 127, off: 0, start: 0, color: 1,
-      num2: 0, ch2: 0, custom2: 0, on2: 127, off2: 0, start2: 0, color2: 1,
+      num: 0, ch: 0, custom: 0, on: 127, off: 0, start: 0, at_preset: 1, color: 1,
+      num2: 0, ch2: 0, custom2: 0, on2: 127, off2: 0, start2: 0, at_preset2: 1, color2: 1,
     };
   }
   if (modeId === 'momentary') {
@@ -1332,22 +1397,32 @@ function DEFAULT_SW_PARAMS(modeId) {
     //   at_preset=1 + start=0 -> START OFF (dispara valores OFF, liveOn=false)
     return {
       mslots: emptyMslotsStr(),
-      at_preset: 0, start: 0, color: 1,
+      at_preset: 1, start: 0, color: 1,
       mslots2: emptyMslotsStr(),
-      at_preset2: 0, start2: 0, color2: 1,
+      at_preset2: 1, start2: 0, color2: 1,
       mslots3: emptyMslotsStr(),
-      at_preset3: 0, start3: 0, color3: 1,
+      at_preset3: 1, start3: 0, color3: 1,
+    };
+  }
+  if (modeId === 'tap_tempo') {
+    // TAP TEMPO: ate 4 slots de CC (so ch e num; valor fixo 127). LED
+    // anima sozinho — idle (pixel 1 -> 2 -> 3 ciclico) ate o usuario
+    // bater o tempo, dai pisca no intervalo entre taps.
+    return {
+      tslots: emptyTapSlotsStr(),
+      color: 1,
     };
   }
   if (modeId === 'single') {
-    // Disparo unico (CC ou PC, controlado por as_pc):
-    //   as_pc=0  -> manda CC `num` com valor `on` (sem estado on/off, o
-    //              `on` aqui age como "CUSTOM ON" — unico valor enviado).
-    //   as_pc=1  -> manda PC logico `pc` (0..16383, Bank MSB + PC).
-    // `start=1` faz disparar tambem na chamada do preset (LED ja entra
-    // aceso em LIVE).
+    // Disparo unico — agora com ate 4 slots em `sslots` ("t:ch:num:val,..."),
+    // cada slot CC ou PC. Os campos legados (num, ch, on, pc, as_pc, start)
+    // ficam como fallback do firmware pra dados antigos.
+    // `at_preset=1` -> dispara todos os slots na chamada do preset.
+    // (Padronizado com MACROS; `start` legado ainda lido como fallback.)
     return {
-      num: 0, ch: 0, on: 127, pc: 0, as_pc: 0, start: 0, color: 1,
+      sslots: emptySingleSlotsStr(),
+      num: 0, ch: 0, on: 127, pc: 0, as_pc: 0,
+      at_preset: 0, color: 1,
     };
   }
   return {};
@@ -1373,7 +1448,8 @@ function parseSwParamsObj(obj) {
       const raw = pair.slice(eq + 1);
       // Chaves compostas string (ex.: MACROS mslots[N] = "t:ch:num:on:off,...")
       // ficam como string; os demais campos sao numericos.
-      if (k && (k === 'mslots' || k === 'mslots2' || k === 'mslots3')) {
+      if (k && (k === 'mslots' || k === 'mslots2' || k === 'mslots3' ||
+                k === 'sslots' || k === 'tslots')) {
         fields[k] = raw;
       } else {
         const v = parseInt(raw, 10);
@@ -1395,55 +1471,213 @@ function swParamsToApiBody(fields) {
   return body;
 }
 
+// Helpers pra montar mensagens MIDI individuais. Cada mensagem reflete
+// um disparo real no fio (CC ou PC), com os numeros que sairam de fato
+// pro pedal. `when` (opcional) e um rotulo curto tipo ON/OFF/PULSE/TAP
+// pra contexto em listagens com varias mensagens da mesma origem.
+function ccMsg(ch, num, val, when) {
+  const m = { kind: 'cc', ch: Number(ch), num: Number(num), val: Number(val) };
+  if (when) m.when = when;
+  return m;
+}
+function pcMsg(ch, pc, when) {
+  const m = { kind: 'pc', ch: Number(ch), pc: Number(pc) };
+  if (when) m.when = when;
+  return m;
+}
+
+// SNAPSHOT (PRESET MODE) — monta a entrada estruturada de um SW pra
+// mostrar TODOS os MIDIs configurados (nao so o que vai disparar em um
+// press especifico). Retorna { sw, modeLabel, sections: [...] } onde
+// cada section tem { label, flags, messages }. Cada modo tem seu builder
+// (logica espelha o que o firmware faz em runtime).
+// SNAPSHOT — apenas o MIDI que REALMENTE dispara na chamada do preset
+// (i.e. so secoes com at_preset=true, e so a direcao do START). Modos
+// reativos a press (MOMENTARY, TAP TEMPO) nao disparam no load do preset.
+function buildSnapshotStomp(sw, id, userParams) {
+  const p = { ...DEFAULT_SW_PARAMS(id), ...(userParams || {}) };
+  const chOK = (v) => v >= 1 && v <= 16;
+  const hasB = chOK(Number(p.ch2));
+  const hasC = id !== 'fx2' && chOK(Number(p.ch3));
+  const tierLabel = (s) => {
+    if (hasC) return s === 0 ? 'CURTO' : s === 1 ? 'LONGO' : 'RECLICK';
+    if (hasB) return s === 0 ? 'CURTO' : 'LONGO';
+    return '';
+  };
+  const sections = [];
+  for (let s = 0; s < 3; s++) {
+    if (s === 2 && id === 'fx2') continue;
+    const suf = s === 0 ? '' : s === 1 ? '2' : '3';
+    const ch = Number(p['ch' + suf]);
+    if (!chOK(ch)) continue;
+    const atPreset = (typeof p['at_preset' + suf] !== 'undefined')
+      ? Number(p['at_preset' + suf]) === 1
+      : true;  // default STOMP antigo: dispara no preset
+    if (!atPreset) continue;
+    const num = Number(p['num' + suf]);
+    const custom = p['custom' + suf] === 1;
+    const onV = custom ? Number(p['on' + suf]) : 127;
+    const offV = custom ? Number(p['off' + suf]) : 0;
+    const startOn = Number(p['start' + suf]) === 1;
+    sections.push({
+      label: tierLabel(s),
+      flags: [startOn ? 'START ON' : 'START OFF'],
+      messages: [ccMsg(ch, num, startOn ? onV : offV)],
+    });
+  }
+  return { sw, modeLabel: 'STOMP', sections };
+}
+
+function buildSnapshotMomentary(sw, userParams) {
+  // MOMENTARY nao dispara na chamada do preset — so reage a press.
+  return { sw, modeLabel: 'MOMENTARY', sections: [] };
+}
+
+function buildSnapshotSingle(sw, userParams) {
+  const p = { ...DEFAULT_SW_PARAMS('single'), ...(userParams || {}) };
+  const atPreset = (typeof p.at_preset !== 'undefined')
+    ? p.at_preset === 1 : p.start === 1;
+  if (!atPreset) return { sw, modeLabel: 'SINGLE', sections: [] };
+  const slotsFromSslots = parseSingleSlots(p.sslots || '');
+  const sslotsHasAny = slotsFromSslots.some((s) => s.ch >= 1 && s.ch <= 16);
+  const slots = slotsFromSslots.slice();
+  if (!sslotsHasAny && Number(p.ch) >= 1 && Number(p.ch) <= 16) {
+    slots[0] = {
+      t: Number(p.as_pc) === 1 ? 1 : 0,
+      ch: Number(p.ch),
+      num: Number(p.num) || 0,
+      val: Number(p.as_pc) === 1 ? (Number(p.pc) || 0) : (Number(p.on) || 127),
+    };
+  }
+  const active = slots.filter((s) => s.ch >= 1 && s.ch <= 16);
+  if (active.length === 0) return { sw, modeLabel: 'SINGLE', sections: [] };
+  return {
+    sw, modeLabel: 'SINGLE',
+    sections: [{
+      label: '',
+      flags: [],
+      messages: active.map((s) =>
+        s.t === 1 ? pcMsg(s.ch, s.val) : ccMsg(s.ch, s.num, s.val)),
+    }],
+  };
+}
+
+function buildSnapshotMacros(sw, userParams) {
+  const p = { ...DEFAULT_SW_PARAMS('macros'), ...(userParams || {}) };
+  const chOK = (s) => s.ch >= 1 && s.ch <= 16;
+  const hasB = parseMslots(p.mslots2 || '').some(chOK);
+  const hasC = parseMslots(p.mslots3 || '').some(chOK);
+  const tierLabel = (s) => {
+    if (hasC) return s === 0 ? 'CURTO' : s === 1 ? 'LONGO' : 'RECLICK';
+    if (hasB) return s === 0 ? 'CURTO' : 'LONGO';
+    return '';
+  };
+  const sections = [];
+  for (let s = 0; s < 3; s++) {
+    const suf = s === 0 ? '' : s === 1 ? '2' : '3';
+    if (p['at_preset' + suf] !== 1) continue;
+    const slots = parseMslots(p['mslots' + suf] || '');
+    const active = slots.filter(chOK);
+    if (active.length === 0) continue;
+    const startOn = p['start' + suf] === 1;
+    const messages = [];
+    for (const slot of active) {
+      const v = startOn ? slot.on : slot.off;
+      if (v < 0) continue;
+      messages.push(slot.t === 1
+        ? pcMsg(slot.ch, v)
+        : ccMsg(slot.ch, slot.num, v));
+    }
+    if (messages.length === 0) continue;
+    sections.push({
+      label: tierLabel(s),
+      flags: [startOn ? 'START ON' : 'START OFF'],
+      messages,
+    });
+  }
+  return { sw, modeLabel: 'MACROS', sections };
+}
+
+function buildSnapshotTap(sw, userParams) {
+  // TAP TEMPO nao dispara na chamada do preset — so reage a press.
+  return { sw, modeLabel: 'TAP TEMPO', sections: [] };
+}
+
+function buildSnapshotSwEntry(sw, id, params) {
+  if (!id || id === 'mute') return { sw, modeLabel: 'MUTE', sections: [] };
+  if (id === 'fx1' || id === 'fx2' || id === 'fx3') {
+    return buildSnapshotStomp(sw, id, params);
+  }
+  if (id === 'momentary') return buildSnapshotMomentary(sw, params);
+  if (id === 'single')    return buildSnapshotSingle(sw, params);
+  if (id === 'macros')    return buildSnapshotMacros(sw, params);
+  if (id === 'tap_tempo') return buildSnapshotTap(sw, params);
+  // Outros modos ainda nao implementados — mostra so o rotulo.
+  const mode = SW_MODES.find((m) => m.id === id);
+  return { sw, modeLabel: mode ? (mode.sub || mode.title) : id.toUpperCase(),
+           sections: [] };
+}
+
 // Monta um evento de press de SW em LIVE MODE pro MONITOR. section: 0 =
 // click curto (chaves sem sufixo), 1 = click longo (sufixo 2), 2 = reclick
 // do STOMP 3 (sufixo 3). nowOn: estado novo apos o press. Retorna null se
-// o modo do SW nao produz CC naquela secao (mute, fx1 section>0, etc.).
+// o modo do SW nao produz MIDI naquela secao (mute, fx1 section>0, etc.).
+// O objeto retornado tem:
+//   sw          — numero do SW (1..6)
+//   modeLabel   — rotulo do modo (STOMP, MACROS, SINGLE, etc.)
+//   sectionLabel— rotulo da secao no tier (CURTO/LONGO/RECLICK) ou ''
+//   on          — true/false do toggle, ou true pra disparos one-shot
+//   messages    — array de { kind: 'cc'|'pc', ch, num/pc, val } com cada
+//                 mensagem MIDI que foi realmente disparada
 function buildLivePressEvent(sw, section, nowOn, savedSwModes, savedSwParams) {
   const id = (savedSwModes && savedSwModes[sw]) || 'mute';
   const userParams = savedSwParams && savedSwParams[sw] && savedSwParams[sw][id];
-  // fx1 unificado e fx3 (legado): tres secoes; o label depende do tier
-  // configurado pra ficar coerente com o picker (so A = sem label;
-  // A+B = CURTO/LONGO; A+B+C = CURTO/LONGO/RECLICK).
-  if (id === 'fx1' || id === 'fx3') {
+
+  // STOMP unificado (fx1) e legados fx2/fx3 — toggle de uma secao com
+  // um CC. tierLabel mostra CURTO/LONGO/RECLICK conforme as secoes
+  // configuradas (so A = sem label; A+B = CURTO/LONGO; +C = todos).
+  if (id === 'fx1' || id === 'fx2' || id === 'fx3') {
     const p = { ...DEFAULT_SW_PARAMS(id), ...(userParams || {}) };
     const chOK = (v) => v >= 1 && v <= 16;
     const hasB = chOK(Number(p.ch2));
-    const hasC = chOK(Number(p.ch3));
+    const hasC = id !== 'fx2' && chOK(Number(p.ch3));
     const tierLabel = (s) => {
       if (hasC) return s === 0 ? 'CURTO' : s === 1 ? 'LONGO' : 'RECLICK';
       if (hasB) return s === 0 ? 'CURTO' : 'LONGO';
-      return '';  // tier 1: sem sufixo
+      return '';
     };
-    if (section === 0) {
-      const value = p.custom === 1 ? (nowOn ? p.on : p.off) : (nowOn ? 127 : 0);
-      return { sw, sectionLabel: tierLabel(0), cc: Number(p.num), ch: Number(p.ch),
-               value, on: nowOn };
-    }
-    if (section === 1 && hasB) {
-      const value = p.custom2 === 1 ? (nowOn ? p.on2 : p.off2) : (nowOn ? 127 : 0);
-      return { sw, sectionLabel: tierLabel(1), cc: Number(p.num2), ch: Number(p.ch2),
-               value, on: nowOn };
-    }
-    if (section === 2 && hasC) {
-      const value = p.custom3 === 1 ? (nowOn ? p.on3 : p.off3) : (nowOn ? 127 : 0);
-      return { sw, sectionLabel: tierLabel(2), cc: Number(p.num3), ch: Number(p.ch3),
-               value, on: nowOn };
-    }
-    return null;
+    const suf = section === 0 ? '' : section === 1 ? '2' : '3';
+    const ch = Number(p['ch' + suf]);
+    if (!chOK(ch)) return null;
+    const custom = Number(p['custom' + suf]) === 1;
+    const onV = Number(p['on' + suf]);
+    const offV = Number(p['off' + suf]);
+    const value = custom ? (nowOn ? onV : offV) : (nowOn ? 127 : 0);
+    return {
+      sw, modeLabel: 'STOMP', sectionLabel: tierLabel(section), on: nowOn,
+      messages: [ccMsg(ch, Number(p['num' + suf]), value)],
+    };
   }
+
   if (id === 'momentary' && section === 0) {
     const p = { ...DEFAULT_SW_PARAMS('momentary'), ...(userParams || {}) };
-    const value = p.custom === 1 ? p.on : 127;
-    return { sw, sectionLabel: 'MOMENTARY', cc: Number(p.num), ch: Number(p.ch),
-             value, on: true };
+    if (!(Number(p.ch) >= 1 && Number(p.ch) <= 16)) return null;
+    const onV = p.custom === 1 ? Number(p.on) : 127;
+    const offV = p.custom === 1 ? Number(p.off) : 0;
+    return {
+      sw, modeLabel: 'MOMENTARY', sectionLabel: '', on: null,
+      messages: [
+        ccMsg(p.ch, p.num, onV),
+        ccMsg(p.ch, p.num, offV),
+      ],
+    };
   }
+
   if (id === 'macros') {
     const p = { ...DEFAULT_SW_PARAMS('macros'), ...(userParams || {}) };
     const slotKey = section === 0 ? 'mslots' : section === 1 ? 'mslots2' : 'mslots3';
     const slots = parseMslots(p[slotKey] || '');
     const chOK = (s) => s.ch >= 1 && s.ch <= 16;
-    const activeCount = slots.filter(chOK).length;
     const hasB = parseMslots(p.mslots2 || '').some(chOK);
     const hasC = parseMslots(p.mslots3 || '').some(chOK);
     const tierLabel = (s) => {
@@ -1451,32 +1685,55 @@ function buildLivePressEvent(sw, section, nowOn, savedSwModes, savedSwParams) {
       if (hasB) return s === 0 ? 'CURTO' : 'LONGO';
       return '';
     };
-    return { sw, kind: 'macros',
-             sectionLabel: tierLabel(section),
-             slotCount: activeCount, on: nowOn };
+    const messages = [];
+    for (const s of slots) {
+      if (s.ch < 1 || s.ch > 16) continue;
+      const v = nowOn ? s.on : s.off;
+      if (v < 0) continue;  // -1 = OFF/pula direcao pra esse slot
+      messages.push(s.t === 1 ? pcMsg(s.ch, v) : ccMsg(s.ch, s.num, v));
+    }
+    return {
+      sw, modeLabel: 'MACROS', sectionLabel: tierLabel(section), on: nowOn,
+      messages,
+    };
   }
+
+  if (id === 'tap_tempo' && section === 0) {
+    const p = { ...DEFAULT_SW_PARAMS('tap_tempo'), ...(userParams || {}) };
+    const slots = parseTapSlots(p.tslots || '');
+    const messages = slots
+      .filter((s) => s.ch >= 1 && s.ch <= 16)
+      .map((s) => ccMsg(s.ch, s.num, 127));
+    return {
+      sw, modeLabel: 'TAP TEMPO', sectionLabel: '', on: null,
+      messages,
+    };
+  }
+
   if (id === 'single' && section === 0) {
     const p = { ...DEFAULT_SW_PARAMS('single'), ...(userParams || {}) };
-    // PC vs CC: o "cc" do evento mostra PC quando as_pc=1 (so pra label),
-    // e o `value` carrega o numero PC ou o valor CC.
-    if (p.as_pc === 1) {
-      return { sw, sectionLabel: 'SINGLE PC', cc: Number(p.pc),
-               ch: Number(p.ch), value: Number(p.pc), on: true };
+    const slotsFromSslots = parseSingleSlots(p.sslots || '');
+    const sslotsHasAny = slotsFromSslots.some((s) => s.ch >= 1 && s.ch <= 16);
+    const slots = slotsFromSslots.slice();
+    if (!sslotsHasAny && Number(p.ch) >= 1 && Number(p.ch) <= 16) {
+      slots[0] = {
+        t: Number(p.as_pc) === 1 ? 1 : 0,
+        ch: Number(p.ch),
+        num: Number(p.num) || 0,
+        val: Number(p.as_pc) === 1
+          ? (Number(p.pc) || 0)
+          : (Number(p.on) || 127),
+      };
     }
-    return { sw, sectionLabel: 'SINGLE', cc: Number(p.num),
-             ch: Number(p.ch), value: Number(p.on), on: true };
+    const messages = slots
+      .filter((s) => s.ch >= 1 && s.ch <= 16)
+      .map((s) => s.t === 1 ? pcMsg(s.ch, s.val) : ccMsg(s.ch, s.num, s.val));
+    return {
+      sw, modeLabel: 'SINGLE', sectionLabel: '', on: null,
+      messages,
+    };
   }
-  if (id === 'fx2' && (section === 0 || section === 1)) {
-    const p = { ...DEFAULT_SW_PARAMS('fx2'), ...(userParams || {}) };
-    if (section === 0) {
-      const value = p.custom === 1 ? (nowOn ? p.on : p.off) : (nowOn ? 127 : 0);
-      return { sw, sectionLabel: 'CURTO', cc: Number(p.num), ch: Number(p.ch),
-               value, on: nowOn };
-    }
-    const value = p.custom2 === 1 ? (nowOn ? p.on2 : p.off2) : (nowOn ? 127 : 0);
-    return { sw, sectionLabel: 'LONGO', cc: Number(p.num2), ch: Number(p.ch2),
-             value, on: nowOn };
-  }
+
   return null;
 }
 
@@ -1736,6 +1993,11 @@ function SwStompSection({ sw, section, label, litArcsOn,
   const start = params[k('start')];
   const color = params[k('color')];
   const isCustom = params[k('custom')] === 1;
+  // at_preset: dispara MIDI na chamada do preset? Default 1 quando
+  // ausente (dados antigos do STOMP, que sempre disparavam).
+  const atPreset = (typeof params[k('at_preset')] !== 'undefined')
+    ? params[k('at_preset')] === 1
+    : true;
   const numOptions = Array.from({ length: 128 }, (_, n) => n);
   // Estado de teste local: o botao MIDI TEST alterna on/off, dispara o CC
   // efetivo daquele estado no dispositivo e reflete no preview do LED.
@@ -1823,6 +2085,19 @@ function SwStompSection({ sw, section, label, litArcsOn,
           aria-label={`Estado inicial: ${start === 1 ? 'ligado' : 'desligado'}`}
         >
           {start === 1 ? 'START ON' : 'START OFF'}
+        </button>
+      </div>
+      <div className="bf-extras-row bf-extras-row-full">
+        <button
+          type="button"
+          className={'bf-input bf-input-num' + (atPreset ? ' is-active' : '')}
+          onClick={() => onChange({ [k('at_preset')]: atPreset ? 0 : 1 })}
+          aria-pressed={atPreset}
+          title={atPreset
+            ? 'START ON PRESET — dispara o CC na chamada do preset (LED reflete o estado inicial em LIVE)'
+            : 'WAITING LIVE MODE — nao dispara na chamada do preset; estado inicial e fixado em silencio'}
+        >
+          {atPreset ? 'START ON PRESET' : 'WAITING LIVE MODE'}
         </button>
       </div>
       {isCustom && (
@@ -2162,10 +2437,10 @@ function SwMacrosSection({ sw, section, label, litArcsOn,
           onClick={() => onChange({ [k('at_preset')]: atPreset ? 0 : 1 })}
           aria-pressed={atPreset}
           title={atPreset
-            ? 'DISPARA COM PRESET — fira os slots na chamada do preset'
-            : 'AGUARDA LIVE — so dispara via press fisico'}
+            ? 'START ON PRESET — dispara os slots na chamada do preset'
+            : 'WAITING LIVE MODE — so dispara via press fisico'}
         >
-          {atPreset ? 'DISPARA C/ PRESET' : 'AGUARDA LIVE'}
+          {atPreset ? 'START ON PRESET' : 'WAITING LIVE MODE'}
         </button>
         <button
           type="button"
@@ -2271,68 +2546,168 @@ function SwMomentaryEditor({ sw, params, onChange, ledPreviewLive }) {
   );
 }
 
-// Editor do modo SINGLE — disparo unico (sem estado on/off). Tem toggle
-// CC / PC: em CC mostra os campos CC + valor + canal; em PC mostra PC
-// (logico 0..16383) + canal. Tambem tem o toggle "DISPARAR COM PRESET"
-// (start=1 -> dispara na chamada do preset e LED ja entra aceso) e o
-// botao FIRE pra testar.
-function SwSingleEditor({ sw, params, onChange, ledPreviewLive, isActiveSingle }) {
-  const isPc = params.as_pc === 1;
-  const fireOnPreset = params.start === 1;
+// TAP TEMPO — um slot: so canal + CC# (valor fixo 127 no firmware).
+function SwTapTempoSlot({ idx, slot, onChange }) {
   const numOptions = Array.from({ length: 128 }, (_, n) => n);
-  // testFired persiste a indicacao de "ultimo disparo" no preview do LED
-  // ate o usuario sair do editor ou clicar de novo (mero feedback visual).
-  const [testFired, setTestFired] = useState(false);
-  // Se o firmware ja reportou este SW como o ultimo SINGLE ativo, mostra
-  // aceso por padrao (cobre o caso de `start=1` ja ter disparado).
-  useEffect(() => {
-    if (isActiveSingle) setTestFired(true);
-  }, [sw, isActiveSingle]);
+  return (
+    <div className="bf-macros-slot bf-tap-slot">
+      <div className="bf-extras-row bf-tap-slot-row">
+        <span className="bf-macros-slot-idx">{idx + 1}</span>
+        <label className="bf-extras-cell">
+          <span className="bf-field-label">CC</span>
+          <div className="bf-select-wrap">
+            <select
+              className="bf-input bf-select"
+              value={slot.num}
+              onChange={(e) => onChange({ num: clamp(Number(e.target.value), 0, 127) })}
+              aria-label="Numero do CC"
+            >
+              {numOptions.map((n) => <option key={n} value={n}>{n}</option>)}
+            </select>
+            <span className="bf-select-chev">▾</span>
+          </div>
+        </label>
+        <label className="bf-extras-cell">
+          <span className="bf-field-label">Canal</span>
+          <div className="bf-select-wrap">
+            <select
+              className={'bf-input bf-select' + (slot.ch === 0 ? ' is-mute' : '')}
+              value={slot.ch}
+              onChange={(e) => onChange({ ch: Number(e.target.value) })}
+              aria-label="Canal MIDI do slot"
+            >
+              <option value={0}>OFF</option>
+              {Array.from({ length: 16 }, (_, i) => i + 1).map((n) => (
+                <option key={n} value={n}>{n}</option>
+              ))}
+            </select>
+            <span className="bf-select-chev">▾</span>
+          </div>
+        </label>
+      </div>
+    </div>
+  );
+}
 
-  const fireTest = async () => {
+// Editor do modo TAP TEMPO — ate 4 slots de CC. Cada press do SW dispara
+// todos os slots com valor 127, e o firmware calcula o tempo entre os
+// dois ultimos taps. O LED no device anima conforme: idle (sem tempo
+// batido) cicla pixel 1 -> 2 -> 3; com tempo batido pisca no intervalo.
+function SwTapTempoEditor({ sw, params, onChange, ledPreviewLive }) {
+  const slots = parseTapSlots(params.tslots || '');
+  const configuredCount = slots.filter((s) => s.ch >= 1 && s.ch <= 16).length;
+  const minVisible = Math.max(1, configuredCount);
+  const [visibleCount, setVisibleCount] = useState(minVisible);
+  useEffect(() => {
+    setVisibleCount((v) => Math.max(v, minVisible));
+  }, [minVisible]);
+
+  const updateSlot = (idx, patch) => {
+    const next = slots.map((s, i) => i === idx ? { ...s, ...patch } : s);
+    onChange({ tslots: serializeTapSlots(next) });
+  };
+
+  const [testFired, setTestFired] = useState(false);
+  const fireTap = async () => {
     setTestFired(true);
-    if (params.ch < 1 || params.ch > 16) return;
-    const body = new URLSearchParams();
-    body.set('ch', String(params.ch));
-    body.set('as_pc', isPc ? '1' : '0');
-    if (isPc) {
-      body.set('pc', String(params.pc));
-    } else {
-      body.set('cc', String(params.num));
-      body.set('value', String(params.on));
+    setTimeout(() => setTestFired(false), 150);  // flash visual breve
+    for (const s of slots) {
+      if (s.ch < 1 || s.ch > 16) continue;
+      const body = new URLSearchParams();
+      body.set('ch', String(s.ch));
+      body.set('as_pc', '0');
+      body.set('cc', String(s.num));
+      body.set('value', '127');
+      try { await apiCall('POST', '/midi/cc', body); } catch {/* preview */}
     }
-    try { await apiCall('POST', '/midi/cc', body); } catch {/* preview/offline */}
   };
 
   const ledLitArcs = testFired ? [0, 1, 2] : [];
   const ledDimmed = !testFired;
 
   return (
-    <div className="bf-sw-fx1">
-      <div className="bf-extras-row">
+    <div className="bf-sw-fx1 bf-sw-macros bf-sw-single bf-sw-tap">
+      {slots.slice(0, visibleCount).map((s, i) => (
+        <SwTapTempoSlot key={i} idx={i} slot={s}
+          onChange={(patch) => updateSlot(i, patch)} />
+      ))}
+      {visibleCount < 4 && (
+        <div className="bf-single-add-row">
+          <button
+            type="button"
+            className="bf-single-add"
+            onClick={() => setVisibleCount(visibleCount + 1)}
+            aria-label="Adicionar mais um slot"
+            title="Adicionar mais um slot"
+          >+</button>
+        </div>
+      )}
+      <div className="bf-extras-row bf-sw-fx1-test">
         <button
           type="button"
-          className={'bf-input bf-input-num' + (!isPc ? ' is-active' : '')}
-          onClick={() => onChange({ as_pc: 0 })}
-          aria-pressed={!isPc}
-          aria-label="Tipo CC"
-        >CC</button>
+          className={'bf-input bf-input-num' + (testFired ? ' is-active' : '')}
+          onClick={fireTap}
+          aria-label="TAP — dispara todos os slots (simula um press)"
+        >
+          TAP
+        </button>
+        <div className={'bf-sw-fx1-led' + (ledDimmed ? ' is-off' : '')}>
+          <FootswitchArc
+            label="LED"
+            colorId={params.color}
+            onChange={(id) => onChange({ color: id })}
+            litArcs={ledLitArcs}
+            labelInside
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// SINGLE — um slot do editor (semelhante ao SwMacrosSlot mas mais
+// simples: um valor unico por slot, sem ON/OFF). Slot { t, ch, num, val }.
+function SwSingleSlot({ idx, slot, onChange }) {
+  const isPc = slot.t === 1;
+  const numOptions = Array.from({ length: 128 }, (_, n) => n);
+  return (
+    <div className="bf-macros-slot">
+      <div className="bf-macros-slot-head">
+        <span className="bf-macros-slot-idx">{idx + 1}</span>
         <button
           type="button"
-          className={'bf-input bf-input-num' + (isPc ? ' is-active' : '')}
-          onClick={() => onChange({ as_pc: 1 })}
+          className={'bf-input bf-input-num bf-macros-slot-type' +
+                     (isPc ? ' is-pc' : ' is-cc')}
+          onClick={() => onChange({ t: isPc ? 0 : 1 })}
           aria-pressed={isPc}
-          aria-label="Tipo PC"
-        >PC</button>
+          aria-label={isPc ? 'Slot envia PC — clique pra trocar pra CC'
+                           : 'Slot envia CC — clique pra trocar pra PC'}
+          title={isPc ? 'Envia PC — clique pra mudar pra CC'
+                      : 'Envia CC — clique pra mudar pra PC'}
+        >{isPc ? 'SEND PC' : 'SEND CC'}</button>
+        <div className="bf-select-wrap bf-macros-slot-ch">
+          <select
+            className={'bf-input bf-select' + (slot.ch === 0 ? ' is-mute' : '')}
+            value={slot.ch}
+            onChange={(e) => onChange({ ch: Number(e.target.value) })}
+            aria-label="Canal MIDI do slot"
+          >
+            <option value={0}>CH OFF</option>
+            {Array.from({ length: 16 }, (_, i) => i + 1).map((n) => (
+              <option key={n} value={n}>{`CH ${n}`}</option>
+            ))}
+          </select>
+          <span className="bf-select-chev">▾</span>
+        </div>
       </div>
       {!isPc ? (
-        <div className="bf-extras-row">
+        <div className="bf-extras-row bf-macros-slot-fields is-pc">
           <label className="bf-extras-cell">
             <span className="bf-field-label">CC</span>
             <div className="bf-select-wrap">
               <select
                 className="bf-input bf-select"
-                value={params.num}
+                value={slot.num}
                 onChange={(e) => onChange({ num: clamp(Number(e.target.value), 0, 127) })}
                 aria-label="Numero do CC"
               >
@@ -2346,8 +2721,8 @@ function SwSingleEditor({ sw, params, onChange, ledPreviewLive, isActiveSingle }
             <div className="bf-select-wrap">
               <select
                 className="bf-input bf-select"
-                value={params.on}
-                onChange={(e) => onChange({ on: clamp(Number(e.target.value), 0, 127) })}
+                value={slot.val}
+                onChange={(e) => onChange({ val: clamp(Number(e.target.value), 0, 127) })}
                 aria-label="Valor do CC"
               >
                 {numOptions.map((n) => <option key={n} value={n}>{n}</option>)}
@@ -2357,7 +2732,7 @@ function SwSingleEditor({ sw, params, onChange, ledPreviewLive, isActiveSingle }
           </label>
         </div>
       ) : (
-        <div className="bf-extras-row">
+        <div className="bf-extras-row bf-macros-slot-fields is-pc">
           <label className="bf-extras-cell">
             <span className="bf-field-label">PC</span>
             <input
@@ -2365,44 +2740,115 @@ function SwSingleEditor({ sw, params, onChange, ledPreviewLive, isActiveSingle }
               className="bf-input"
               min={0}
               max={16383}
-              value={params.pc}
-              onChange={(e) => onChange({ pc: clamp(Number(e.target.value) || 0, 0, 16383) })}
+              value={slot.val}
+              onChange={(e) => onChange({ val: clamp(Number(e.target.value) || 0, 0, 16383) })}
               aria-label="Numero do Program Change (0..16383)"
             />
           </label>
         </div>
       )}
+    </div>
+  );
+}
+
+// Editor do modo SINGLE — disparo unico (sem estado on/off). Comeca com
+// 1 slot visivel; botao "+" na ponta inferior direita revela mais ate
+// totalizar 4 slots. Cada slot e independente (CC ou PC, canal, valor).
+// Toggle "DISPARA COM PRESET" / "AGUARDA LIVE" e color do LED sao
+// globais do SW (todos os slots compartilham). Quando o SW e pressionado
+// em LIVE, TODOS os slots configurados disparam (e o LED acende).
+function SwSingleEditor({ sw, params, onChange, ledPreviewLive, isActiveSingle }) {
+  // Slots vem do `sslots`. Se vazio E havia config legada (single antigo
+  // de 1 slot em num/ch/on/pc/as_pc), migra slot[0] dos campos legados
+  // pra UI ficar coerente. Save sobrescreve `sslots`; campos legados
+  // permanecem mas o firmware ignora quando `sslots` esta presente.
+  const slotsFromSslots = parseSingleSlots(params.sslots || '');
+  const sslotsHasAny = slotsFromSslots.some((s) => s.ch >= 1 && s.ch <= 16);
+  const legacyCh = Number(params.ch) || 0;
+  const slots = slotsFromSslots.slice();
+  if (!sslotsHasAny && legacyCh >= 1 && legacyCh <= 16) {
+    slots[0] = {
+      t: Number(params.as_pc) === 1 ? 1 : 0,
+      ch: legacyCh,
+      num: Number(params.num) || 0,
+      val: Number(params.as_pc) === 1
+        ? (Number(params.pc) || 0)
+        : (Number(params.on) || 127),
+    };
+  }
+  const configuredCount = slots.filter((s) => s.ch >= 1 && s.ch <= 16).length;
+  const minVisible = Math.max(1, configuredCount);
+  const [visibleCount, setVisibleCount] = useState(minVisible);
+  useEffect(() => {
+    setVisibleCount((v) => Math.max(v, minVisible));
+  }, [minVisible]);
+
+  // at_preset substitui o `start` antigo do SINGLE. Pra dados legados
+  // que ainda guardam `start`, usamos como fallback.
+  const fireOnPreset = (typeof params.at_preset !== 'undefined')
+    ? params.at_preset === 1
+    : params.start === 1;
+  const [testFired, setTestFired] = useState(false);
+  useEffect(() => {
+    if (isActiveSingle) setTestFired(true);
+  }, [sw, isActiveSingle]);
+
+  const updateSlot = (idx, patch) => {
+    const next = slots.map((s, i) => i === idx ? { ...s, ...patch } : s);
+    onChange({ sslots: serializeSingleSlots(next) });
+  };
+
+  const fireTest = async () => {
+    setTestFired(true);
+    let firedAny = false;
+    for (const slot of slots) {
+      if (slot.ch < 1 || slot.ch > 16) continue;
+      firedAny = true;
+      const body = new URLSearchParams();
+      body.set('ch', String(slot.ch));
+      body.set('as_pc', slot.t === 1 ? '1' : '0');
+      if (slot.t === 1) {
+        body.set('pc', String(slot.val));
+      } else {
+        body.set('cc', String(slot.num));
+        body.set('value', String(slot.val));
+      }
+      try { await apiCall('POST', '/midi/cc', body); } catch {/* preview */}
+    }
+    if (!firedAny) setTestFired(false);
+  };
+
+  const ledLitArcs = testFired ? [0, 1, 2] : [];
+  const ledDimmed = !testFired;
+
+  return (
+    <div className="bf-sw-fx1 bf-sw-macros bf-sw-single">
+      {slots.slice(0, visibleCount).map((s, i) => (
+        <SwSingleSlot key={i} idx={i} slot={s}
+          onChange={(patch) => updateSlot(i, patch)} />
+      ))}
+      {visibleCount < 4 && (
+        <div className="bf-single-add-row">
+          <button
+            type="button"
+            className="bf-single-add"
+            onClick={() => setVisibleCount(visibleCount + 1)}
+            aria-label="Adicionar mais um slot"
+            title="Adicionar mais um slot"
+          >+</button>
+        </div>
+      )}
       <div className="bf-extras-row">
-        <label className="bf-extras-cell">
-          <span className="bf-field-label">Canal</span>
-          <div className="bf-select-wrap">
-            <select
-              className={'bf-input bf-select' + (params.ch === 0 ? ' is-mute' : '')}
-              value={params.ch}
-              onChange={(e) => onChange({ ch: Number(e.target.value) })}
-              aria-label="Canal MIDI"
-            >
-              <option value={0}>OFF</option>
-              {Array.from({ length: 16 }, (_, i) => i + 1).map((n) => (
-                <option key={n} value={n}>{n}</option>
-              ))}
-            </select>
-            <span className="bf-select-chev">▾</span>
-          </div>
-        </label>
         <button
           type="button"
           className={'bf-input bf-input-num' + (fireOnPreset ? ' is-active' : '')}
-          onClick={() => onChange({ start: fireOnPreset ? 0 : 1 })}
+          onClick={() => onChange({ at_preset: fireOnPreset ? 0 : 1 })}
           aria-pressed={fireOnPreset}
-          aria-label={fireOnPreset
-            ? 'Dispara junto da chamada do preset'
-            : 'Aguardar press em LIVE MODE'}
           title={fireOnPreset
-            ? 'DISPARA COM PRESET — fira tambem na chamada do preset (LED ja entra aceso em LIVE)'
-            : 'AGUARDA LIVE — so dispara via press fisico em LIVE MODE'}
+            ? 'START ON PRESET — dispara todos os slots na chamada do preset'
+            : 'WAITING LIVE MODE — so dispara via press fisico em LIVE MODE'}
         >
-          {fireOnPreset ? 'DISPARA C/ PRESET' : 'AGUARDA LIVE'}
+          {fireOnPreset ? 'START ON PRESET' : 'WAITING LIVE MODE'}
         </button>
       </div>
       <div className="bf-extras-row bf-sw-fx1-test">
@@ -2410,7 +2856,7 @@ function SwSingleEditor({ sw, params, onChange, ledPreviewLive, isActiveSingle }
           type="button"
           className={'bf-input bf-input-num' + (testFired ? ' is-active' : '')}
           onClick={fireTest}
-          aria-label="FIRE — dispara o SINGLE no dispositivo"
+          aria-label="FIRE — dispara todos os slots configurados"
         >
           FIRE
         </button>
@@ -2551,6 +2997,15 @@ function LiveModePanel({ presetCount, swModes, onSetSwMode, swParams, onSetSwPar
                   onChange={(patch) => onSetSwParam(selectedSw, 'macros', patch)}
                   ledPreviewLive={ledPreviewLive}
                   liveOn={Array.isArray(swLiveOn) ? swLiveOn[selectedSw - 1] : undefined}
+                />
+              ) : modeOf(selectedSw) === 'tap_tempo' ? (
+                <SwTapTempoEditor
+                  key={selectedSw}
+                  sw={selectedSw}
+                  params={(swParams && swParams[selectedSw] && swParams[selectedSw].tap_tempo)
+                    || DEFAULT_SW_PARAMS('tap_tempo')}
+                  onChange={(patch) => onSetSwParam(selectedSw, 'tap_tempo', patch)}
+                  ledPreviewLive={ledPreviewLive}
                 />
               ) : modeOf(selectedSw) === 'single' ? (
                 <SwSingleEditor
@@ -2723,78 +3178,271 @@ function PagePresetConfig({
             swLiveOn={swLiveOn} lastSingleSw={lastSingleSw} />
         : <PresetEditorCard tag={tag} onDisplayNameChange={onDisplayNameChange} onRegisterSave={onRegisterPresetSave} savedSwModes={savedSwModes} savedSwParams={savedSwParams} />}
 
-      {showMonitor && <MonitorView monitorEntry={monitorEntry} liveEvents={liveEvents} />}
+      {showMonitor && (
+        <MonitorView switchMode={switchMode}
+          monitorEntry={monitorEntry} liveEvents={liveEvents} />
+      )}
     </div>
   );
 }
 
-// MONITOR persistente — sempre visivel no fim da pagina de preset,
-// independente do modo (PRESET / LIVE). Mostra duas secoes na mesma area:
-//   1) Snapshot do preset ativo (header MIDI + lista dos modos dos SWs).
-//   2) Log de presses de SW em LIVE MODE (eventos capturados pelo poll de
-//      /bank/current). Limpa na troca de preset.
-function MonitorView({ monitorEntry, liveEvents }) {
+// MONITOR persistente — comportamento depende do modo do app:
+//   PRESET MODE -> mostra o snapshot da CHAMADA DE PRESET (header MIDI +
+//                  lista dos modos dos SWs).
+//   LIVE MODE   -> mostra o disparo MAIS RECENTE de um SW (eventos
+//                  acumulam so dentro do mesmo press; o proximo press
+//                  substitui o anterior).
+// Formata uma mensagem MIDI estruturada em texto curto pra copia/share.
+function formatMsgText(m) {
+  const when = m.when ? `[${m.when}] ` : '';
+  if (m.kind === 'pc') return `${when}PC ${m.pc} · CH ${m.ch}`;
+  return `${when}CC ${m.num} = ${m.val} · CH ${m.ch}`;
+}
+
+// Monta o texto do MONITOR (PRESET) — usado pelo botao de copiar.
+function buildPresetMonitorText(entry) {
+  if (!entry) return '';
+  const lines = [];
+  lines.push(`[${entry.time}] ${entry.tag} - ${entry.name}`);
+  lines.push(`HEADER = PC ${entry.pc} - CH ${entry.ch}`);
+  (entry.extraPcs || []).forEach((pc) => {
+    lines.push(`PC EXTRA ${pc.slot} = PC ${pc.program} - CH ${pc.ch}`);
+  });
+  (entry.extraCcs || []).forEach((cc) => {
+    lines.push(`CC EXTRA ${cc.slot} = CC ${cc.ctrl} - VAL ${cc.value} - CH ${cc.ch}`);
+  });
+  (entry.swEntries || []).forEach((sw) => {
+    lines.push('');
+    lines.push(`SW-${sw.sw} ${sw.modeLabel}`);
+    if (!sw.sections || sw.sections.length === 0) {
+      lines.push('  (sem MIDI configurado)');
+      return;
+    }
+    sw.sections.forEach((sec) => {
+      const head = [sec.label, ...(sec.flags || [])].filter(Boolean).join(' · ');
+      if (head) lines.push(`  ${head}`);
+      (sec.messages || []).forEach((m) => lines.push(`    ${formatMsgText(m)}`));
+    });
+  });
+  return lines.join('\n');
+}
+
+// Monta o texto do MONITOR (LIVE) — usado pelo botao de copiar.
+function buildLiveMonitorText(events) {
+  if (!events || events.length === 0) return '';
+  const lines = [];
+  events.forEach((ev) => {
+    const parts = [`SW-${ev.sw}`, ev.modeLabel || 'STOMP'];
+    if (ev.sectionLabel) parts.push(ev.sectionLabel);
+    if (ev.on === true) parts.push('ON');
+    else if (ev.on === false) parts.push('OFF');
+    lines.push(parts.join(' · '));
+    const msgs = Array.isArray(ev.messages) ? ev.messages : [];
+    if (msgs.length === 0) {
+      lines.push('  (nenhum MIDI disparado)');
+    } else {
+      msgs.forEach((m) => lines.push(`  ${formatMsgText(m)}`));
+    }
+  });
+  return lines.join('\n');
+}
+
+function MonitorCopyButton({ getText }) {
+  const [copied, setCopied] = React.useState(false);
+  const onClick = async () => {
+    const text = (getText() || '').trim();
+    if (!text) return;
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1400);
+    } catch (e) { /* noop */ }
+  };
+  return (
+    <button type="button"
+            className={'bf-monitor-copy' + (copied ? ' is-copied' : '')}
+            onClick={onClick}
+            title="Copiar pra enviar no WhatsApp">
+      {copied ? 'COPIADO' : 'COPIAR'}
+    </button>
+  );
+}
+
+function MonitorView({ switchMode, monitorEntry, liveEvents }) {
   const events = Array.isArray(liveEvents) ? liveEvents : [];
+  const isLive = switchMode === 'live';
+  if (!isLive) {
+    // ── PRESET MODE — snapshot da chamada de preset ──
+    return (
+      <div className="bf-live-monitor">
+        <div className="bf-live-monitor-head">
+          <span>MONITOR · CHAMADA DE PRESET</span>
+          {monitorEntry && (
+            <MonitorCopyButton getText={() => buildPresetMonitorText(monitorEntry)} />
+          )}
+        </div>
+        <div className="bf-live-monitor-body">
+          {!monitorEntry ? (
+            <div className="bf-monitor-empty">Aguardando chamada de preset...</div>
+          ) : (
+            <>
+              <div key={monitorEntry.tag + '@' + monitorEntry.time}
+                   className="bf-monitor-entry">
+                <div className="bf-monitor-line">
+                  <span className="bf-monitor-time">{monitorEntry.time}</span>
+                  <span className="bf-monitor-tag">{monitorEntry.tag}</span>
+                  <span className="bf-monitor-sep">-</span>
+                  <span className="bf-monitor-name">{monitorEntry.name}</span>
+                </div>
+                <div className="bf-monitor-line bf-monitor-header">
+                  HEADER = PC {monitorEntry.pc} - CH {monitorEntry.ch}
+                </div>
+                {(monitorEntry.extraPcs || []).map((pc) => (
+                  <div key={'pc' + pc.slot}
+                       className="bf-monitor-line bf-monitor-header">
+                    PC EXTRA {pc.slot} = PC {pc.program} - CH {pc.ch}
+                  </div>
+                ))}
+                {(monitorEntry.extraCcs || []).map((cc) => (
+                  <div key={'cc' + cc.slot}
+                       className="bf-monitor-line bf-monitor-header">
+                    CC EXTRA {cc.slot} = CC {cc.ctrl} - VAL {cc.value} - CH {cc.ch}
+                  </div>
+                ))}
+              </div>
+              <div className="bf-monitor-sw-list">
+                {(monitorEntry.swEntries || []).map((entry, i) => (
+                  <div key={i} className="bf-monitor-ev">
+                    <div className="bf-monitor-ev-head">
+                      <span className="bf-monitor-ev-sw">SW-{entry.sw}</span>
+                      <span className="bf-monitor-ev-mode">{entry.modeLabel}</span>
+                    </div>
+                    {(!entry.sections || entry.sections.length === 0) ? (
+                      <div className="bf-monitor-ev-msg bf-monitor-ev-msg-empty">
+                        (sem MIDI configurado)
+                      </div>
+                    ) : (
+                      entry.sections.map((sec, j) => (
+                        <div key={j} className="bf-monitor-section">
+                          {(sec.label || (sec.flags && sec.flags.length > 0)) && (
+                            <div className="bf-monitor-section-head">
+                              {sec.label && (
+                                <span className="bf-monitor-ev-sec">{sec.label}</span>
+                              )}
+                              {(sec.flags || []).map((f, k) => (
+                                <span key={k} className="bf-monitor-flag">{f}</span>
+                              ))}
+                            </div>
+                          )}
+                          <div className="bf-monitor-ev-msgs">
+                            {(sec.messages || []).map((m, k) => (
+                              <div key={k} className="bf-monitor-ev-msg">
+                                {m.when && (
+                                  <span className="bf-msg-when">{m.when}</span>
+                                )}
+                                {m.kind === 'pc' ? (
+                                  <>
+                                    <span className="bf-msg-type is-pc">PC</span>
+                                    <span className="bf-msg-num">{m.pc}</span>
+                                    <span className="bf-msg-sep">·</span>
+                                    <span className="bf-msg-ch">CH {m.ch}</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <span className="bf-msg-type is-cc">CC</span>
+                                    <span className="bf-msg-num">{m.num}</span>
+                                    <span className="bf-msg-eq">=</span>
+                                    <span className="bf-msg-val">{m.val}</span>
+                                    <span className="bf-msg-sep">·</span>
+                                    <span className="bf-msg-ch">CH {m.ch}</span>
+                                  </>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    );
+  }
+  // ── LIVE MODE — disparo mais recente do SW ──
   return (
     <div className="bf-live-monitor">
-      <div className="bf-live-monitor-head">MONITOR</div>
-      <div className="bf-live-monitor-body">
-        {!monitorEntry ? (
-          <div className="bf-monitor-empty">Aguardando chamada de preset...</div>
-        ) : (
-          <>
-            <div key={monitorEntry.tag + '@' + monitorEntry.time} className="bf-monitor-entry">
-              <div className="bf-monitor-line">
-                <span className="bf-monitor-time">{monitorEntry.time}</span>
-                <span className="bf-monitor-tag">{monitorEntry.tag}</span>
-                <span className="bf-monitor-sep">-</span>
-                <span className="bf-monitor-name">{monitorEntry.name}</span>
-              </div>
-              <div className="bf-monitor-line bf-monitor-header">
-                HEADER = PC {monitorEntry.pc} - CH {monitorEntry.ch}
-              </div>
-              {(monitorEntry.extraPcs || []).map((pc) => (
-                <div key={'pc' + pc.slot} className="bf-monitor-line bf-monitor-header">
-                  PC EXTRA {pc.slot} = PC {pc.program} - CH {pc.ch}
-                </div>
-              ))}
-              {(monitorEntry.extraCcs || []).map((cc) => (
-                <div key={'cc' + cc.slot} className="bf-monitor-line bf-monitor-header">
-                  CC EXTRA {cc.slot} = CC {cc.ctrl} - VAL {cc.value} - CH {cc.ch}
-                </div>
-              ))}
-            </div>
-            <div className="bf-monitor-sw-list">
-              {(monitorEntry.swModes || []).map((label, i) => (
-                <div key={i} className="bf-monitor-sw">SW-{i + 1} {label}</div>
-              ))}
-            </div>
-          </>
+      <div className="bf-live-monitor-head">
+        <span>MONITOR · LIVE MODE</span>
+        {events.length > 0 && (
+          <MonitorCopyButton getText={() => buildLiveMonitorText(events)} />
         )}
+      </div>
+      <div className="bf-live-monitor-body">
         <div className="bf-monitor-events-section">
-          <div className="bf-monitor-events-head">EVENTOS LIVE MODE · {events.length}</div>
           {events.length === 0 ? (
-            <div className="bf-monitor-event bf-monitor-event-empty">
-              (sem presses capturados ainda — pressione um SW em LIVE MODE)
+            <div className="bf-monitor-event-empty">
+              (sem disparos capturados — pressione um SW em LIVE MODE)
             </div>
           ) : (
             events.map((ev, i) => {
-              const onLabel = ev.on ? 'ON' : 'OFF';
-              const secLabel = ev.sectionLabel ? ` ${ev.sectionLabel}` : '';
-              if (ev.kind === 'macros') {
-                const n = ev.slotCount || 0;
-                return (
-                  <div key={i} className="bf-monitor-line bf-monitor-event">
-                    <span className="bf-monitor-mode">MODO LIVE</span>
-                    {' '}SW-{ev.sw} MACROS{secLabel} {onLabel} ({n} slot{n === 1 ? '' : 's'})
-                  </div>
-                );
-              }
-              const chLabel = ev.ch >= 1 && ev.ch <= 16 ? ev.ch : 'OFF';
+              const msgs = Array.isArray(ev.messages) ? ev.messages : [];
               return (
-                <div key={i} className="bf-monitor-line bf-monitor-event">
-                  <span className="bf-monitor-mode">MODO LIVE</span>
-                  {' '}SW-{ev.sw}{secLabel} {onLabel} - CC {ev.cc} - VAL {ev.value} - CH {chLabel}
+                <div key={i} className="bf-monitor-ev">
+                  <div className="bf-monitor-ev-head">
+                    <span className="bf-monitor-ev-sw">SW-{ev.sw}</span>
+                    <span className="bf-monitor-ev-mode">{ev.modeLabel || 'STOMP'}</span>
+                    {ev.sectionLabel && (
+                      <span className="bf-monitor-ev-sec">{ev.sectionLabel}</span>
+                    )}
+                    {(ev.on === true || ev.on === false) && (
+                      <span className={'bf-monitor-ev-state is-' + (ev.on ? 'on' : 'off')}>
+                        {ev.on ? 'ON' : 'OFF'}
+                      </span>
+                    )}
+                  </div>
+                  {msgs.length > 0 ? (
+                    <div className="bf-monitor-ev-msgs">
+                      {msgs.map((m, j) => (
+                        <div key={j} className="bf-monitor-ev-msg">
+                          {m.kind === 'pc' ? (
+                            <>
+                              <span className="bf-msg-type is-pc">PC</span>
+                              <span className="bf-msg-num">{m.pc}</span>
+                              <span className="bf-msg-sep">·</span>
+                              <span className="bf-msg-ch">CH {m.ch}</span>
+                            </>
+                          ) : (
+                            <>
+                              <span className="bf-msg-type is-cc">CC</span>
+                              <span className="bf-msg-num">{m.num}</span>
+                              <span className="bf-msg-eq">=</span>
+                              <span className="bf-msg-val">{m.val}</span>
+                              <span className="bf-msg-sep">·</span>
+                              <span className="bf-msg-ch">CH {m.ch}</span>
+                            </>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="bf-monitor-ev-msg bf-monitor-ev-msg-empty">
+                      (nenhum MIDI disparado — canais OFF)
+                    </div>
+                  )}
                 </div>
               );
             })
@@ -3926,6 +4574,8 @@ function App() {
   const swMomentaryCountRef = useRef([0, 0, 0, 0, 0, 0]);
   // Contador de disparos do modo SINGLE (mesma mecanica).
   const swSingleCountRef = useRef([0, 0, 0, 0, 0, 0]);
+  // Contador de taps do modo TAP TEMPO.
+  const swTapCountRef = useRef([0, 0, 0, 0, 0, 0]);
   // Qual SW em SINGLE foi o ultimo a disparar (vindo do firmware).
   // -1 = nenhum. Usado pelo SwSingleEditor pra mostrar o LED aceso.
   const [lastSingleSw, setLastSingleSw] = useState(-1);
@@ -3963,72 +4613,19 @@ function App() {
     if (!currentSavedMeta) return;
     const letters = ['A', 'B', 'C', 'D', 'E'];
     const tag = `${letters[bankLetterIndex] || 'A'}${presetNumber}`;
-    const fmtCh = (ch) => (ch >= 1 && ch <= 16 ? ch : 'OFF');
-    const swModeList = Array.from({ length: 6 }, (_, i) => {
+    // Estrutura por SW: { sw, modeLabel, sections: [{label, flags, messages}] }
+    const swEntries = Array.from({ length: 6 }, (_, i) => {
       const sw = i + 1;
       const id = (savedSwModes && savedSwModes[sw]) || 'mute';
-      const mode = SW_MODES.find((m) => m.id === id) || SW_MODES[0];
       const params = savedSwParams && savedSwParams[sw] && savedSwParams[sw][id];
-      // fx1 unificado e fx3 (legado): mostra so as secoes com canal valido.
-      if (id === 'fx1' || id === 'fx3') {
-        const p = { ...DEFAULT_SW_PARAMS(id), ...(params || {}) };
-        const parts = [`CC ${Number(p.num)} - CH ${fmtCh(Number(p.ch))}`];
-        if (fmtCh(Number(p.ch2)) !== 'OFF') {
-          parts.push(`CC ${Number(p.num2)} - CH ${fmtCh(Number(p.ch2))}`);
-        }
-        if (fmtCh(Number(p.ch3)) !== 'OFF') {
-          parts.push(`CC ${Number(p.num3)} - CH ${fmtCh(Number(p.ch3))}`);
-        }
-        return `STOMP ${parts.join(' / ')}`;
-      }
-      if (id === 'fx2') {
-        const p = { ...DEFAULT_SW_PARAMS('fx2'), ...(params || {}) };
-        return `${mode.sub} CC ${Number(p.num)} - CH ${fmtCh(Number(p.ch))}` +
-               ` / CC ${Number(p.num2)} - CH ${fmtCh(Number(p.ch2))}`;
-      }
-      if (id === 'momentary') {
-        const p = { ...DEFAULT_SW_PARAMS('momentary'), ...(params || {}) };
-        return `${mode.sub} CC ${Number(p.num)} - CH ${fmtCh(Number(p.ch))}`;
-      }
-      if (id === 'macros') {
-        const p = { ...DEFAULT_SW_PARAMS('macros'), ...(params || {}) };
-        const chOK = (s) => s.ch >= 1 && s.ch <= 16;
-        const a = parseMslots(p.mslots).filter(chOK).length;
-        const b = parseMslots(p.mslots2).filter(chOK).length;
-        const c = parseMslots(p.mslots3).filter(chOK).length;
-        // n = slots configurados; ap = at_preset; st = start (estado inicial).
-        // Arrow sempre indica o estado inicial. Sufixo P quando dispara
-        // na chamada do preset.
-        const tag = (n, ap, st) => {
-          if (n === 0) return null;
-          const arrow = st ? '↑' : '↓';
-          return `${n}${arrow}${ap ? 'P' : ''}`;
-        };
-        const parts = [];
-        const a1 = tag(a, p.at_preset === 1, p.start === 1);
-        const b1 = tag(b, p.at_preset2 === 1, p.start2 === 1);
-        const c1 = tag(c, p.at_preset3 === 1, p.start3 === 1);
-        if (a1) parts.push(`A:${a1}`);
-        if (b1) parts.push(`B:${b1}`);
-        if (c1) parts.push(`C:${c1}`);
-        return `${mode.sub} ${parts.length ? parts.join(' ') : '(vazio)'}`;
-      }
-      if (id === 'single') {
-        const p = { ...DEFAULT_SW_PARAMS('single'), ...(params || {}) };
-        const trig = p.start === 1 ? ' (PRESET)' : '';
-        if (p.as_pc === 1) {
-          return `${mode.sub} PC ${Number(p.pc)} - CH ${fmtCh(Number(p.ch))}${trig}`;
-        }
-        return `${mode.sub} CC ${Number(p.num)} - VAL ${Number(p.on)} - CH ${fmtCh(Number(p.ch))}${trig}`;
-      }
-      return mode.sub;
-    });
+      return buildSnapshotSwEntry(sw, id, params);
+    }).filter((e) => e.sections && e.sections.length > 0);
     const snapshot = JSON.stringify({
       tag, name: currentSavedMeta.name || tag,
       pc: currentSavedMeta.bank, ch: currentSavedMeta.channel,
       extraPcs: currentSavedMeta.extraPcs,
       extraCcs: currentSavedMeta.extraCcs,
-      swModeList,
+      swEntries,
     });
     if (monitorLastSnapshotRef.current === snapshot) return;
     monitorLastSnapshotRef.current = snapshot;
@@ -4048,7 +4645,7 @@ function App() {
         .map((cc, i) => ({ slot: i + 1, ch: Number(cc.ch),
                            ctrl: Number(cc.ctrl), value: Number(cc.value) }))
         .filter((cc) => cc.ch >= 1 && cc.ch <= 16),
-      swModes: swModeList,
+      swEntries,
     });
   }, [currentSavedMeta, savedSwModes, savedSwParams, bankLetterIndex, presetNumber]);
   // Tag do preset atual ("A1"...) sempre fresca — saveLive grava nela.
@@ -4305,13 +4902,16 @@ function App() {
       const newLastSingle = (typeof bank.last_single_sw !== 'undefined')
         ? Number(bank.last_single_sw)
         : null;
+      const newTapCount = Array.isArray(bank.sw_tap_count)
+        ? Array.from({ length: 6 }, (_, i) => Number(bank.sw_tap_count[i]) || 0)
+        : null;
       // Detecta presses em LIVE MODE: flip em swLiveOn / swLiveOn2 /
       // swLiveOn3 entre polls vira um evento pro MONITOR. Delta no
       // sw_momentary_count loga um evento por pulse do modo MOMENTARY
       // (que nao mexe em liveOn, entao precisa do contador). So conta
       // dentro do mesmo preset (troca de preset reseta o log e nao gera
       // evento por initial-MIDI).
-      if (newLiveOn && switchModeRef.current === 'live' &&
+      if (switchModeRef.current === 'live' &&
           liveEventsTagRef.current === newTag) {
         const prevA = swLiveOnRef.current;
         const prevB = swLiveOn2Ref.current;
@@ -4323,7 +4923,7 @@ function App() {
             String(now.getSeconds()).padStart(2, '0')}`;
         const newEvents = [];
         for (let i = 0; i < 6; i++) {
-          if (newLiveOn[i] !== prevA[i]) {
+          if (newLiveOn && newLiveOn[i] !== prevA[i]) {
             const ev = buildLivePressEvent(i + 1, 0, newLiveOn[i],
               savedSwModesRef.current, savedSwParamsRef.current);
             if (ev) newEvents.push({ ...ev, time });
@@ -4359,9 +4959,22 @@ function App() {
               if (ev) newEvents.push({ ...ev, time });
             }
           }
+          if (newTapCount && newTapCount[i] !== swTapCountRef.current[i]) {
+            const prevT = swTapCountRef.current[i];
+            const delta = (newTapCount[i] - prevT + 65536) % 65536;
+            const n = Math.min(delta, 8);  // taps podem ser frequentes
+            for (let k = 0; k < n; k++) {
+              const ev = buildLivePressEvent(i + 1, 0, true,
+                savedSwModesRef.current, savedSwParamsRef.current);
+              if (ev) newEvents.push({ ...ev, time });
+            }
+          }
         }
         if (newEvents.length) {
-          setLiveEvents((prev) => [...prev, ...newEvents].slice(-50));
+          // Substitui — o monitor mostra so o disparo MAIS RECENTE.
+          // (Mantemos `newEvents` como array porque um press pode
+          // disparar simultaneamente em mais de uma secao.)
+          setLiveEvents(newEvents);
         }
       }
       // Reset do log na troca de preset (e captura do primeiro tag visto).
@@ -4386,6 +4999,9 @@ function App() {
       }
       if (newSingleCount) {
         swSingleCountRef.current = newSingleCount;
+      }
+      if (newTapCount) {
+        swTapCountRef.current = newTapCount;
       }
       if (newLastSingle !== null) {
         setLastSingleSw((cur) => (cur === newLastSingle ? cur : newLastSingle));
@@ -4454,6 +5070,12 @@ function App() {
           (_, i) => Number(bank.sw_single_count[i]) || 0);
       } else {
         swSingleCountRef.current = [0, 0, 0, 0, 0, 0];
+      }
+      if (Array.isArray(bank.sw_tap_count)) {
+        swTapCountRef.current = Array.from({ length: 6 },
+          (_, i) => Number(bank.sw_tap_count[i]) || 0);
+      } else {
+        swTapCountRef.current = [0, 0, 0, 0, 0, 0];
       }
       if (typeof bank.last_single_sw !== 'undefined') {
         setLastSingleSw(Number(bank.last_single_sw));
