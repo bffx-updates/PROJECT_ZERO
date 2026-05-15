@@ -388,7 +388,7 @@ function BrightnessSlider({ value, onChange }) {
   );
 }
 
-function FootswitchArc({ label, colorId, onChange }) {
+function FootswitchArc({ label, colorId, onChange, litArcs, labelInside }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   const safeId = clamp(colorId, 0, 14);
@@ -412,15 +412,22 @@ function FootswitchArc({ label, colorId, onChange }) {
   }, [open]);
 
   return (
-    <div className="bf-fsw" ref={ref} style={{ position: 'relative' }}>
+    <div className={'bf-fsw' + (labelInside ? ' has-label-inside' : '')} ref={ref} style={{ position: 'relative' }}>
       <button className="bf-fsw-glyph" style={{ '--led-c': color, border: 0, padding: 0, cursor: 'pointer' }} onClick={() => setOpen((v) => !v)}>
         <svg className="bf-fsw-arcs" viewBox="0 0 72 72">
-          {arcs.map((a, i) => (
-            <path key={i} d={seg(a)} stroke={isOff ? '#26262a' : color} />
-          ))}
+          {arcs.map((a, i) => {
+            // litArcs (opcional): so esses indices ficam acesos, o resto
+            // escuro. undefined = todos acesos (comportamento padrao).
+            const arcLit = !litArcs || litArcs.includes(i);
+            return (
+              <path key={i} d={seg(a)}
+                    stroke={(isOff || !arcLit) ? '#26262a' : color} />
+            );
+          })}
         </svg>
+        {labelInside && <span className="bf-fsw-label bf-fsw-label-inside">{label}</span>}
       </button>
-      <span className="bf-fsw-label">{label}</span>
+      {!labelInside && <span className="bf-fsw-label">{label}</span>}
       {open && (
         <>
         <div className="bf-modal-backdrop" onClick={() => setOpen(false)} />
@@ -663,13 +670,13 @@ function metaToApiBody(meta) {
   return body;
 }
 
-function PresetEditorCard({ tag, onDisplayNameChange, onRegisterSave }) {
+function PresetEditorCard({ tag, onDisplayNameChange, onRegisterSave, savedSwModes, savedSwParams }) {
   const [metaByTag, setMetaByTag] = useState({});
   const [savedMetaByTag, setSavedMetaByTag] = useState({});
   const [status, setStatus] = useState('idle'); // idle | loading | saving | saved | error
   const [activeTab, setActiveTab] = useState('midi'); // midi | display | extras | monitor
   const [monitorEntry, setMonitorEntry] = useState(null);
-  const monitorLastTagRef = useRef(null);
+  const monitorLastSnapshotRef = useRef(null);
   const meta = metaByTag[tag] || DEFAULT_PRESET_META();
   const savedMeta = savedMetaByTag[tag];
   const isDirty = savedMeta
@@ -728,8 +735,35 @@ function PresetEditorCard({ tag, onDisplayNameChange, onRegisterSave }) {
   useEffect(() => {
     const saved = savedMetaByTag[tag];
     if (!saved) return;
-    if (monitorLastTagRef.current === tag) return;
-    monitorLastTagRef.current = tag;
+    // Snapshot do modo salvo de cada SW (1..6). SW sem modo salvo cai
+    // em 'mute'. Para modos que enviam CC, mostra tambem CC e canal.
+    const swModeList = Array.from({ length: 6 }, (_, i) => {
+      const sw = i + 1;
+      const id = (savedSwModes && savedSwModes[sw]) || 'mute';
+      const mode = SW_MODES.find((m) => m.id === id) || SW_MODES[0];
+      const params = savedSwParams && savedSwParams[sw] && savedSwParams[sw][id];
+      const fx1Params = id === 'fx1'
+        ? { ...DEFAULT_SW_PARAMS('fx1'), ...(params || {}) }
+        : params;
+      if (fx1Params &&
+          Number.isFinite(Number(fx1Params.num)) &&
+          Number.isFinite(Number(fx1Params.ch))) {
+        const channel = Number(fx1Params.ch);
+        return `${mode.sub} CC ${Number(fx1Params.num)} - CH ${channel >= 1 && channel <= 16 ? channel : 'OFF'}`;
+      }
+      return mode.sub;
+    });
+    const monitorSnapshot = JSON.stringify({
+      tag,
+      name: saved.name || tag,
+      pc: saved.bank,
+      ch: saved.channel,
+      extraPcs: saved.extraPcs,
+      extraCcs: saved.extraCcs,
+      swModeList,
+    });
+    if (monitorLastSnapshotRef.current === monitorSnapshot) return;
+    monitorLastSnapshotRef.current = monitorSnapshot;
     const now = new Date();
     const hh = String(now.getHours()).padStart(2, '0');
     const mm = String(now.getMinutes()).padStart(2, '0');
@@ -740,8 +774,24 @@ function PresetEditorCard({ tag, onDisplayNameChange, onRegisterSave }) {
       pc: saved.bank,
       ch: saved.channel,
       time: `${hh}:${mm}:${ss}`,
+      extraPcs: (saved.extraPcs || [])
+        .map((pc, i) => ({
+          slot: i + 1,
+          ch: Number(pc.ch),
+          program: Number(pc.program),
+        }))
+        .filter((pc) => pc.ch >= 1 && pc.ch <= 16),
+      extraCcs: (saved.extraCcs || [])
+        .map((cc, i) => ({
+          slot: i + 1,
+          ch: Number(cc.ch),
+          ctrl: Number(cc.ctrl),
+          value: Number(cc.value),
+        }))
+        .filter((cc) => cc.ch >= 1 && cc.ch <= 16),
+      swModes: swModeList,
     });
-  }, [tag, savedMetaByTag]);
+  }, [tag, savedMetaByTag, savedSwModes, savedSwParams]);
 
   // Registra savePreset + estado pro botao SAVE global (TabBar) acionar.
   useEffect(() => {
@@ -1129,17 +1179,34 @@ function PresetEditorCard({ tag, onDisplayNameChange, onRegisterSave }) {
             {!monitorEntry ? (
               <div className="bf-monitor-empty">Aguardando chamada de preset...</div>
             ) : (
-              <div key={monitorEntry.tag + '@' + monitorEntry.time} className="bf-monitor-entry">
-                <div className="bf-monitor-line">
-                  <span className="bf-monitor-time">{monitorEntry.time}</span>
-                  <span className="bf-monitor-tag">{monitorEntry.tag}</span>
-                  <span className="bf-monitor-sep">-</span>
-                  <span className="bf-monitor-name">{monitorEntry.name}</span>
+              <>
+                <div key={monitorEntry.tag + '@' + monitorEntry.time} className="bf-monitor-entry">
+                  <div className="bf-monitor-line">
+                    <span className="bf-monitor-time">{monitorEntry.time}</span>
+                    <span className="bf-monitor-tag">{monitorEntry.tag}</span>
+                    <span className="bf-monitor-sep">-</span>
+                    <span className="bf-monitor-name">{monitorEntry.name}</span>
+                  </div>
+                  <div className="bf-monitor-line bf-monitor-header">
+                    HEADER = PC {monitorEntry.pc} - CH {monitorEntry.ch}
+                  </div>
+                  {(monitorEntry.extraPcs || []).map((pc) => (
+                    <div key={'pc' + pc.slot} className="bf-monitor-line bf-monitor-header">
+                      PC EXTRA {pc.slot} = PC {pc.program} - CH {pc.ch}
+                    </div>
+                  ))}
+                  {(monitorEntry.extraCcs || []).map((cc) => (
+                    <div key={'cc' + cc.slot} className="bf-monitor-line bf-monitor-header">
+                      CC EXTRA {cc.slot} = CC {cc.ctrl} - VAL {cc.value} - CH {cc.ch}
+                    </div>
+                  ))}
                 </div>
-                <div className="bf-monitor-line bf-monitor-header">
-                  HEADER = PC {monitorEntry.pc} - CH {monitorEntry.ch}
+                <div className="bf-monitor-sw-list">
+                  {(monitorEntry.swModes || []).map((label, i) => (
+                    <div key={i} className="bf-monitor-sw">SW-{i + 1} {label}</div>
+                  ))}
                 </div>
-              </div>
+              </>
             )}
           </div>
         )}
@@ -1271,6 +1338,69 @@ function swModesToStr(obj) {
   return parts.join(',');
 }
 
+// ── Parametros por SW/modo ────────────────────────────────────────────
+// Cada SW, em cada modo, tem um conjunto de campos proprio. O firmware
+// guarda como linhas sw<N>.<modo>:<key=value|...> e a API entrega/recebe
+// o blob. Aqui o shape e { [sw]: { [modeId]: {campos} } }.
+//
+// STOMP 1 (fx1): num 0..127 (numero do CC); ch 0=OFF 1..16; custom 0/1
+// (habilita on/off proprios); on/off 0..127 (efetivos so com custom=1,
+// senao 127/0); start 0/1 (estado inicial); color 0..14 (indice em
+// LED_COLORS — cor do LED do SW aceso em LIVE). STOMP 1 e so CC — o envio
+// por PC sera um modo separado.
+//
+// STOMP 2 (fx2): duas secoes iguais a do STOMP 1. A secao A (click curto)
+// reusa as mesmas chaves do fx1 (num/ch/custom/on/off/start/color); a
+// secao B (click longo) usa as chaves com sufixo 2 (num2/ch2/custom2/
+// on2/off2/start2/color2). Cada secao alterna um CC proprio.
+function DEFAULT_SW_PARAMS(modeId) {
+  if (modeId === 'fx1') {
+    return { num: 0, ch: 0, custom: 0, on: 127, off: 0, start: 0, color: 1 };
+  }
+  if (modeId === 'fx2') {
+    return {
+      num: 0, ch: 0, custom: 0, on: 127, off: 0, start: 0, color: 1,
+      num2: 0, ch2: 0, custom2: 0, on2: 127, off2: 0, start2: 0, color2: 1,
+    };
+  }
+  return {};
+}
+
+// Parseia o objeto sw_params da API ({"sw1.fx1":"type=0|num=48|..."}) pro
+// shape { [sw]: { [modeId]: {campos numericos} } }. Campos ausentes caem
+// no default do modo.
+function parseSwParamsObj(obj) {
+  const out = {};
+  if (!obj || typeof obj !== 'object') return out;
+  for (const key of Object.keys(obj)) {
+    const m = /^sw([1-6])\.(.+)$/.exec(key);
+    if (!m) continue;
+    const sw = parseInt(m[1], 10);
+    const modeId = m[2];
+    const fields = { ...DEFAULT_SW_PARAMS(modeId) };
+    const blob = obj[key] || '';
+    for (const pair of String(blob).split('|')) {
+      const eq = pair.indexOf('=');
+      if (eq < 0) continue;
+      const k = pair.slice(0, eq);
+      const v = parseInt(pair.slice(eq + 1), 10);
+      if (k && Number.isFinite(v)) fields[k] = v;
+    }
+    if (!out[sw]) out[sw] = {};
+    out[sw][modeId] = fields;
+  }
+  return out;
+}
+
+// Serializa os campos de um SW/modo no body de POST /sw/params.
+function swParamsToApiBody(fields) {
+  const body = new URLSearchParams();
+  for (const k of Object.keys(fields || {})) {
+    body.set(k, String(fields[k]));
+  }
+  return body;
+}
+
 // Footswitch (pedal de stomp) — cap arredondado + pescoco + base em 2
 // niveis. Reutilizado por FX1/FX2/FX3; a diferenca entre eles esta no
 // comportamento (ver SW_MODES), nao no desenho.
@@ -1351,7 +1481,349 @@ function SwModeIcon({ id }) {
   }
 }
 
-function LiveModePanel({ presetCount, swModes, onSetSwMode }) {
+// Editor de parametros do modo STOMP 1 (fx1). Reusa os componentes de
+// campo do resto do app (bf-extras-row / bf-extras-cell / bf-select-wrap,
+// botoes bf-input-num e FootswitchArc pro LED). Edicao e local — a
+// persistencia acontece no SAVE do rodape (saveLive). STOMP 1 e so CC; o
+// envio por PC sera um modo separado. Com CUSTOM ligado aparecem os campos
+// Valor On / Valor Off.
+function SwFx1Editor({ sw, params, onChange, ledPreviewLive, liveOn }) {
+  const isCustom = params.custom === 1;
+  const numOptions = Array.from({ length: 128 }, (_, n) => n);
+  // Estado de teste local: o botao MIDI TEST alterna on/off, dispara o CC
+  // efetivo daquele estado no dispositivo e reflete no preview do LED.
+  // Inicia no estado configurado em `start` (reinicia por SW — key no
+  // LiveModePanel).
+  const [testOn, setTestOn] = useState(
+    typeof liveOn === 'boolean' ? liveOn : params.start === 1);
+  useEffect(() => {
+    setTestOn(typeof liveOn === 'boolean' ? liveOn : params.start === 1);
+  }, [sw, liveOn, params.start]);
+  const midiTest = async () => {
+    const next = !testOn;
+    setTestOn(next);
+    // Valor efetivo do CC: custom usa on/off salvos, senao 127/0.
+    const value = isCustom ? (next ? params.on : params.off)
+                           : (next ? 127 : 0);
+    if (params.ch < 1 || params.ch > 16) {
+      const body = new URLSearchParams();
+      body.set('sw', String(sw));
+      body.set('on', next ? '1' : '0');
+      body.set('color', String(params.color));
+      try { await apiCall('POST', '/midi/cc', body); } catch {/* preview/offline */}
+      return;
+    }
+    if (params.ch < 1 || params.ch > 16) return;  // canal OFF — so o preview
+    const body = new URLSearchParams();
+    body.set('sw', String(sw));
+    body.set('on', next ? '1' : '0');
+    body.set('color', String(params.color));
+    if (params.ch >= 1 && params.ch <= 16) {
+      body.set('ch', String(params.ch));
+      body.set('cc', String(params.num));
+      body.set('value', String(value));
+    }
+    try { await apiCall('POST', '/midi/cc', body); } catch {/* preview/offline */}
+  };
+  // Preview do LED (FootswitchArc): ligado -> 3 arcos acesos. Desligado:
+  // se o LED PREVIEW LIVE MODE estiver ON, so o arco de baixo aceso
+  // (espelha o firmware, que mantem so o pixel central); se estiver OFF,
+  // atenua o conjunto todo.
+  const ledLitArcs = (!testOn && ledPreviewLive) ? [0] : undefined;
+  const ledDimmed = !testOn && !ledPreviewLive;
+  return (
+    <div className="bf-sw-fx1">
+      <div className="bf-extras-row">
+        <label className="bf-extras-cell">
+          <span className="bf-field-label">CC</span>
+          <div className="bf-select-wrap">
+            <select
+              className="bf-input bf-select"
+              value={params.num}
+              onChange={(e) => onChange({ num: clamp(Number(e.target.value), 0, 127) })}
+              aria-label="Numero do CC"
+            >
+              {numOptions.map((n) => <option key={n} value={n}>{n}</option>)}
+            </select>
+            <span className="bf-select-chev">▾</span>
+          </div>
+        </label>
+        <label className="bf-extras-cell">
+          <span className="bf-field-label">Canal</span>
+          <div className="bf-select-wrap">
+            <select
+              className={'bf-input bf-select' + (params.ch === 0 ? ' is-mute' : '')}
+              value={params.ch}
+              onChange={(e) => onChange({ ch: Number(e.target.value) })}
+              aria-label="Canal MIDI"
+            >
+              <option value={0}>OFF</option>
+              {Array.from({ length: 16 }, (_, i) => i + 1).map((n) => (
+                <option key={n} value={n}>{n}</option>
+              ))}
+            </select>
+            <span className="bf-select-chev">▾</span>
+          </div>
+        </label>
+      </div>
+      <div className="bf-extras-row">
+        <button
+          type="button"
+          className={'bf-input bf-input-num' + (isCustom ? ' is-active' : '')}
+          onClick={() => onChange({ custom: isCustom ? 0 : 1 })}
+          aria-pressed={isCustom}
+          aria-label={`Custom: ${isCustom ? 'ligado' : 'desligado'}`}
+          title="Liga valores ON/OFF proprios"
+        >
+          CUSTOM
+        </button>
+        <button
+          type="button"
+          className={'bf-input bf-input-num' + (params.start === 1 ? ' is-active' : '')}
+          onClick={() => onChange({ start: params.start === 1 ? 0 : 1 })}
+          aria-pressed={params.start === 1}
+          aria-label={`Estado inicial: ${params.start === 1 ? 'ligado' : 'desligado'}`}
+        >
+          {params.start === 1 ? 'START ON' : 'START OFF'}
+        </button>
+      </div>
+      {isCustom && (
+        <div className="bf-extras-row">
+          <label className="bf-extras-cell">
+            <span className="bf-field-label">Valor On</span>
+            <div className="bf-select-wrap">
+              <select
+                className="bf-input bf-select"
+                value={params.on}
+                onChange={(e) => onChange({ on: clamp(Number(e.target.value), 0, 127) })}
+                aria-label="Valor do CC quando ligado"
+              >
+                {numOptions.map((n) => <option key={n} value={n}>{n}</option>)}
+              </select>
+              <span className="bf-select-chev">▾</span>
+            </div>
+          </label>
+          <label className="bf-extras-cell">
+            <span className="bf-field-label">Valor Off</span>
+            <div className="bf-select-wrap">
+              <select
+                className="bf-input bf-select"
+                value={params.off}
+                onChange={(e) => onChange({ off: clamp(Number(e.target.value), 0, 127) })}
+                aria-label="Valor do CC quando desligado"
+              >
+                {numOptions.map((n) => <option key={n} value={n}>{n}</option>)}
+              </select>
+              <span className="bf-select-chev">▾</span>
+            </div>
+          </label>
+        </div>
+      )}
+      <div className="bf-extras-row bf-sw-fx1-test">
+        <button
+          type="button"
+          className={'bf-input bf-input-num' + (testOn ? ' is-active' : '')}
+          onClick={midiTest}
+          aria-pressed={testOn}
+          aria-label="MIDI TEST — dispara o CC do STOMP e alterna on/off"
+        >
+          MIDI TEST
+        </button>
+        <div className={'bf-sw-fx1-led' + (ledDimmed ? ' is-off' : '')}>
+          <FootswitchArc
+            label="LED"
+            colorId={params.color}
+            onChange={(id) => onChange({ color: id })}
+            litArcs={ledLitArcs}
+            labelInside
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Uma secao do editor STOMP 2 (fx2) — mesma estrutura do SwFx1Editor, mas
+// parametrizada pelo `section`: 0 = click curto (chaves num/ch/...), 1 =
+// click longo (chaves num2/ch2/...). O `onChange` recebido ja aponta pro
+// modo fx2 do SW; aqui so prefixamos as chaves da secao certa.
+function SwFx2Section({ sw, section, label, params, onChange, ledPreviewLive, liveOn }) {
+  const suf = section === 1 ? '2' : '';
+  const k = (base) => base + suf;
+  const num = params[k('num')];
+  const ch = params[k('ch')];
+  const on = params[k('on')];
+  const off = params[k('off')];
+  const start = params[k('start')];
+  const color = params[k('color')];
+  const isCustom = params[k('custom')] === 1;
+  const numOptions = Array.from({ length: 128 }, (_, n) => n);
+  // Estado de teste local: o botao MIDI TEST alterna on/off, dispara o CC
+  // efetivo daquele estado no dispositivo e reflete no preview do LED.
+  // Inicia no estado live do firmware (so a secao A o recebe) ou, na
+  // falta, no `start` configurado. Reinicia por SW (key no LiveModePanel).
+  const [testOn, setTestOn] = useState(
+    typeof liveOn === 'boolean' ? liveOn : start === 1);
+  useEffect(() => {
+    setTestOn(typeof liveOn === 'boolean' ? liveOn : start === 1);
+  }, [sw, section, liveOn, start]);
+  const midiTest = async () => {
+    const next = !testOn;
+    setTestOn(next);
+    // Valor efetivo do CC: custom usa on/off salvos, senao 127/0.
+    const value = isCustom ? (next ? on : off) : (next ? 127 : 0);
+    const body = new URLSearchParams();
+    body.set('sw', String(sw));
+    body.set('on', next ? '1' : '0');
+    body.set('color', String(color));
+    body.set('section', String(section));
+    if (ch >= 1 && ch <= 16) {
+      body.set('ch', String(ch));
+      body.set('cc', String(num));
+      body.set('value', String(value));
+    }
+    try { await apiCall('POST', '/midi/cc', body); } catch {/* preview/offline */}
+  };
+  // Preview do LED (FootswitchArc): ligado -> 3 arcos acesos. Desligado:
+  // se o LED PREVIEW LIVE MODE estiver ON, so o arco de baixo aceso; se
+  // estiver OFF, atenua o conjunto todo.
+  const ledLitArcs = (!testOn && ledPreviewLive) ? [0] : undefined;
+  const ledDimmed = !testOn && !ledPreviewLive;
+  return (
+    <div className="bf-sw-fx1">
+      {label && <div className="bf-section-label">{label}</div>}
+      <div className="bf-extras-row">
+        <label className="bf-extras-cell">
+          <span className="bf-field-label">CC</span>
+          <div className="bf-select-wrap">
+            <select
+              className="bf-input bf-select"
+              value={num}
+              onChange={(e) => onChange({ [k('num')]: clamp(Number(e.target.value), 0, 127) })}
+              aria-label="Numero do CC"
+            >
+              {numOptions.map((n) => <option key={n} value={n}>{n}</option>)}
+            </select>
+            <span className="bf-select-chev">▾</span>
+          </div>
+        </label>
+        <label className="bf-extras-cell">
+          <span className="bf-field-label">Canal</span>
+          <div className="bf-select-wrap">
+            <select
+              className={'bf-input bf-select' + (ch === 0 ? ' is-mute' : '')}
+              value={ch}
+              onChange={(e) => onChange({ [k('ch')]: Number(e.target.value) })}
+              aria-label="Canal MIDI"
+            >
+              <option value={0}>OFF</option>
+              {Array.from({ length: 16 }, (_, i) => i + 1).map((n) => (
+                <option key={n} value={n}>{n}</option>
+              ))}
+            </select>
+            <span className="bf-select-chev">▾</span>
+          </div>
+        </label>
+      </div>
+      <div className="bf-extras-row">
+        <button
+          type="button"
+          className={'bf-input bf-input-num' + (isCustom ? ' is-active' : '')}
+          onClick={() => onChange({ [k('custom')]: isCustom ? 0 : 1 })}
+          aria-pressed={isCustom}
+          aria-label={`Custom: ${isCustom ? 'ligado' : 'desligado'}`}
+          title="Liga valores ON/OFF proprios"
+        >
+          CUSTOM
+        </button>
+        <button
+          type="button"
+          className={'bf-input bf-input-num' + (start === 1 ? ' is-active' : '')}
+          onClick={() => onChange({ [k('start')]: start === 1 ? 0 : 1 })}
+          aria-pressed={start === 1}
+          aria-label={`Estado inicial: ${start === 1 ? 'ligado' : 'desligado'}`}
+        >
+          {start === 1 ? 'START ON' : 'START OFF'}
+        </button>
+      </div>
+      {isCustom && (
+        <div className="bf-extras-row">
+          <label className="bf-extras-cell">
+            <span className="bf-field-label">Valor On</span>
+            <div className="bf-select-wrap">
+              <select
+                className="bf-input bf-select"
+                value={on}
+                onChange={(e) => onChange({ [k('on')]: clamp(Number(e.target.value), 0, 127) })}
+                aria-label="Valor do CC quando ligado"
+              >
+                {numOptions.map((n) => <option key={n} value={n}>{n}</option>)}
+              </select>
+              <span className="bf-select-chev">▾</span>
+            </div>
+          </label>
+          <label className="bf-extras-cell">
+            <span className="bf-field-label">Valor Off</span>
+            <div className="bf-select-wrap">
+              <select
+                className="bf-input bf-select"
+                value={off}
+                onChange={(e) => onChange({ [k('off')]: clamp(Number(e.target.value), 0, 127) })}
+                aria-label="Valor do CC quando desligado"
+              >
+                {numOptions.map((n) => <option key={n} value={n}>{n}</option>)}
+              </select>
+              <span className="bf-select-chev">▾</span>
+            </div>
+          </label>
+        </div>
+      )}
+      <div className="bf-extras-row bf-sw-fx1-test">
+        <button
+          type="button"
+          className={'bf-input bf-input-num' + (testOn ? ' is-active' : '')}
+          onClick={midiTest}
+          aria-pressed={testOn}
+          aria-label="MIDI TEST — dispara o CC do STOMP e alterna on/off"
+        >
+          MIDI TEST
+        </button>
+        <div className={'bf-sw-fx1-led' + (ledDimmed ? ' is-off' : '')}>
+          <FootswitchArc
+            label="LED"
+            colorId={color}
+            onChange={(id) => onChange({ [k('color')]: id })}
+            litArcs={ledLitArcs}
+            labelInside
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Editor de parametros do modo STOMP 2 (fx2). Duas secoes iguais a do
+// STOMP 1: a do click curto (secao A, chaves sem sufixo) e a do click
+// longo (secao B, chaves com sufixo 2). Cada uma alterna um CC proprio.
+// Edicao local — a persistencia acontece no SAVE do rodape (saveLive).
+function SwFx2Editor({ sw, params, onChange, ledPreviewLive, liveOn }) {
+  return (
+    <div className="bf-sw-fx2">
+      <SwFx2Section
+        sw={sw} section={0} label="CLICK CURTO"
+        params={params} onChange={onChange}
+        ledPreviewLive={ledPreviewLive} liveOn={liveOn}
+      />
+      <SwFx2Section
+        sw={sw} section={1} label="CLICK LONGO"
+        params={params} onChange={onChange}
+        ledPreviewLive={ledPreviewLive} liveOn={undefined}
+      />
+    </div>
+  );
+}
+
+function LiveModePanel({ presetCount, swModes, onSetSwMode, swParams, onSetSwParam, ledPreviewLive, swLiveOn }) {
   const [selectedSw, setSelectedSw] = useState(null);  // 1..N ou null
   const [cardTab, setCardTab] = useState('gear');      // 'gear' | 'display'
   const [pickerOpen, setPickerOpen] = useState(false); // popup de selecao de modo
@@ -1435,6 +1907,33 @@ function LiveModePanel({ presetCount, swModes, onSetSwMode }) {
           </div>
 
           <div className="bf-sw-card-body">
+            {cardTab === 'gear' && (
+              modeOf(selectedSw) === 'fx1' ? (
+                <SwFx1Editor
+                  key={selectedSw}
+                  sw={selectedSw}
+                  params={(swParams && swParams[selectedSw] && swParams[selectedSw].fx1)
+                    || DEFAULT_SW_PARAMS('fx1')}
+                  onChange={(patch) => onSetSwParam(selectedSw, 'fx1', patch)}
+                  ledPreviewLive={ledPreviewLive}
+                  liveOn={Array.isArray(swLiveOn) ? swLiveOn[selectedSw - 1] : undefined}
+                />
+              ) : modeOf(selectedSw) === 'fx2' ? (
+                <SwFx2Editor
+                  key={selectedSw}
+                  sw={selectedSw}
+                  params={(swParams && swParams[selectedSw] && swParams[selectedSw].fx2)
+                    || DEFAULT_SW_PARAMS('fx2')}
+                  onChange={(patch) => onSetSwParam(selectedSw, 'fx2', patch)}
+                  ledPreviewLive={ledPreviewLive}
+                  liveOn={Array.isArray(swLiveOn) ? swLiveOn[selectedSw - 1] : undefined}
+                />
+              ) : (
+                <div className="bf-sw-card-empty">
+                  SW{selectedSw} · {currentMode.title} — config em breve
+                </div>
+              )
+            )}
             {cardTab === 'display' && (
               <div className="bf-sw-card-empty">SW{selectedSw} · display em breve</div>
             )}
@@ -1491,7 +1990,9 @@ function PagePresetConfig({
   presetCount, onNextLetter, onSelectPreset, onDisplayNameChange,
   onRegisterPresetSave,
   switchMode, onSetSwitchMode,
-  swModes, onSetSwMode,
+  swModes, savedSwModes, onSetSwMode,
+  swParams, savedSwParams, onSetSwParam, swLiveOn,
+  ledPreviewLive,
 }) {
   const letters = ['A', 'B', 'C', 'D', 'E'];
   const tag = `${letters[bankLetterIndex]}${presetNumber}`;
@@ -1550,8 +2051,10 @@ function PagePresetConfig({
       </div>
 
       {switchMode === 'live'
-        ? <LiveModePanel presetCount={presetCount} swModes={swModes} onSetSwMode={onSetSwMode} />
-        : <PresetEditorCard tag={tag} onDisplayNameChange={onDisplayNameChange} onRegisterSave={onRegisterPresetSave} />}
+        ? <LiveModePanel presetCount={presetCount} swModes={swModes} onSetSwMode={onSetSwMode}
+            swParams={swParams} onSetSwParam={onSetSwParam} ledPreviewLive={ledPreviewLive}
+            swLiveOn={swLiveOn} />
+        : <PresetEditorCard tag={tag} onDisplayNameChange={onDisplayNameChange} onRegisterSave={onRegisterPresetSave} savedSwModes={savedSwModes} savedSwParams={savedSwParams} />}
     </div>
   );
 }
@@ -1568,6 +2071,7 @@ function PageGlobalConfig({
   ledColorMode, setLedColorMode,
   letterLedColors, setLetterLedColors,
   switchLedColors, setSwitchLedColors,
+  ledPreviewLive, setLedPreviewLive,
   presetCount,
   deviceState, usbState, onToggleUsb,
   connectionMode, onToggleConnectionMode,
@@ -1715,6 +2219,26 @@ function PageGlobalConfig({
 
             <p style={{ fontSize: 12, color: 'var(--muted)', margin: '14px 4px 0', lineHeight: 1.4 }}>
               Toque em qualquer LED para abrir a paleta de 14 cores.
+            </p>
+          </div>
+
+          <div className="bf-card">
+            <div className="bf-card-head">
+              <h3>LED Preview Live Mode</h3>
+              <span className="meta">{ledPreviewLive ? 'ON' : 'OFF'}</span>
+            </div>
+            <div className="bf-auto-row">
+              <span className="label">Preview do SW desligado</span>
+              <button
+                className={'bf-switch is-accent' + (ledPreviewLive ? ' is-on' : '')}
+                onClick={() => setLedPreviewLive(!ledPreviewLive)}
+                aria-label="LED Preview Live Mode"
+                aria-pressed={ledPreviewLive}
+              />
+            </div>
+            <p style={{ fontSize: 12, color: 'var(--muted)', margin: '14px 4px 0', lineHeight: 1.4 }}>
+              Com ON, em LIVE MODE um SW STOMP desligado mantém só o pixel central
+              aceso (em vez de apagar os 3). OFF = comportamento padrão.
             </p>
           </div>
         </>
@@ -2588,6 +3112,9 @@ function App() {
   const [ledColorMode, setLedColorMode] = useState('letras');
   const [letterLedColors, setLetterLedColors] = useState([2, 2, 2, 2, 2]);
   const [switchLedColors, setSwitchLedColors] = useState([2, 2, 2, 2, 2, 2]);
+  // LED PREVIEW LIVE MODE: SW STOMP desligado mantem o pixel central aceso.
+  // Padrao ON — sincronizado com /config/global no load.
+  const [ledPreviewLive, setLedPreviewLive] = useState(true);
 
   const [autoStartEnabled, setAutoStartEnabled] = useState(false);
   const [autoStartMode, setAutoStartMode] = useState('bank');
@@ -2612,33 +3139,95 @@ function App() {
   const [savedSwModes, setSavedSwModes] = useState({});
   const [swModesStatus, setSwModesStatus] = useState('idle'); // idle|saving|saved|error
   const swModesDirty = swModesToStr(swModes) !== swModesToStr(savedSwModes);
+  const [swLiveOn, setSwLiveOn] = useState([false, false, false, false, false, false]);
+  // Parametros por SW/modo do preset atual (ver parseSwParamsObj). Mesma
+  // mecanica do swModes: editar marca pendente, o SAVE do rodape grava.
+  const [swParams, setSwParams] = useState({});
+  const [savedSwParams, setSavedSwParams] = useState({});
+  const swParamsDirty =
+    JSON.stringify(swParams) !== JSON.stringify(savedSwParams);
+  // dirty combinado do LIVE MODE (sw_modes do header + params dos SWs).
+  const liveDirty = swModesDirty || swParamsDirty;
   // Espelha o dirty pro poll de loadBankCurrent (setInterval com closure
-  // velha) decidir se pode sobrescrever swModes ou se respeita a edicao.
+  // velha) decidir se pode sobrescrever o estado ou se respeita a edicao.
   const swModesDirtyRef = useRef(false);
   useEffect(() => { swModesDirtyRef.current = swModesDirty; }, [swModesDirty]);
-  // Tag do preset atual ("A1"...) sempre fresca — saveSwModes grava nela.
+  const swParamsDirtyRef = useRef(false);
+  useEffect(() => { swParamsDirtyRef.current = swParamsDirty; }, [swParamsDirty]);
+  // Tag do preset atual ("A1"...) sempre fresca — saveLive grava nela.
   const currentTagRef = useRef('A1');
+  // Tag pra qual swParams foi carregado — o poll re-busca quando muda.
+  const swParamsTagRef = useRef(null);
 
-  // Apenas estado local — a persistencia acontece no SAVE (saveSwModes).
+  // Apenas estado local — a persistencia acontece no SAVE (saveLive).
   const setSwMode = (sw, modeId) =>
     setSwModes((prev) => ({ ...prev, [sw]: modeId }));
 
-  // Grava os 6 sw_modes do preset atual. Acionado pelo botao SAVE do
-  // rodape quando switchMode === 'live'. Em preview/offline o POST falha
-  // e cai no catch (status 'error') — mesmo padrao do setDeviceSwitchMode.
-  const saveSwModes = async () => {
-    setSwModesStatus('saving');
+  // Edita um campo de um SW/modo. Cria a entrada com os defaults do modo
+  // se ainda nao existir. Local — persistido pelo SAVE do rodape.
+  const setSwParam = (sw, modeId, patch) =>
+    setSwParams((prev) => {
+      const prevSw = prev[sw] || {};
+      const prevMode = prevSw[modeId] || DEFAULT_SW_PARAMS(modeId);
+      return {
+        ...prev,
+        [sw]: { ...prevSw, [modeId]: { ...prevMode, ...patch } },
+      };
+    });
+
+  // Carrega os params de SW de um preset (GET /sw/params). Seta swParams e
+  // savedSwParams (baseline) — descarta edicao pendente. Otimista no
+  // swParamsTagRef pra o poll nao re-buscar antes da resposta chegar.
+  const loadSwParams = async (tag) => {
+    swParamsTagRef.current = tag;
     try {
-      const body = new URLSearchParams();
-      body.set('sw_modes', swModesToStr(swModes));
+      const resp = await apiCall(
+        'GET', `/sw/params?bank=${encodeURIComponent(tag)}`);
+      const parsed = parseSwParamsObj(resp && resp.sw_params);
+      setSwParams(parsed);
+      setSavedSwParams(parsed);
+    } catch {
+      swParamsTagRef.current = null;  // permite retry no proximo poll
+    }
+  };
+
+  // Grava o estado do LIVE MODE do preset atual: o sw_modes do header e,
+  // em seguida, os params de cada SW/modo que mudou. Acionado pelo botao
+  // SAVE do rodape quando switchMode === 'live'. Sao varias chamadas em
+  // serie — se uma falhar, marca erro e re-sincroniza do dispositivo pra
+  // nao ficar em estado torto. Em preview/offline cai no catch.
+  const saveLive = async () => {
+    setSwModesStatus('saving');
+    const tag = currentTagRef.current;
+    try {
+      const headerBody = new URLSearchParams();
+      headerBody.set('sw_modes', swModesToStr(swModes));
       await apiCall('POST',
-        `/bank/preset?bank=${encodeURIComponent(currentTagRef.current)}`, body);
+        `/bank/preset?bank=${encodeURIComponent(tag)}`, headerBody);
       setSavedSwModes(swModes);
+
+      // Params: posta so os SW/modo que mudaram desde o ultimo SAVE.
+      for (let sw = 1; sw <= 6; sw++) {
+        const modes = swParams[sw] || {};
+        for (const modeId of Object.keys(modes)) {
+          const cur = JSON.stringify(modes[modeId]);
+          const prev = JSON.stringify((savedSwParams[sw] || {})[modeId]);
+          if (cur === prev) continue;
+          await apiCall('POST',
+            `/sw/params?bank=${encodeURIComponent(tag)}&sw=${sw}` +
+            `&mode=${encodeURIComponent(modeId)}`,
+            swParamsToApiBody(modes[modeId]));
+        }
+      }
+      setSavedSwParams(swParams);
+
       setSwModesStatus('saved');
       setTimeout(() => setSwModesStatus((s) => (s === 'saved' ? 'idle' : s)), 1200);
     } catch {
       setSwModesStatus('error');
       setTimeout(() => setSwModesStatus((s) => (s === 'error' ? 'idle' : s)), 1400);
+      // Re-sincroniza pra refletir o que realmente gravou no dispositivo.
+      loadSwParams(tag);
     }
   };
 
@@ -2749,6 +3338,7 @@ function App() {
       if (typeof config.auto_start_mode !== 'undefined') setAutoStartMode(Number(config.auto_start_mode) === 1 ? 'live' : 'bank');
       if (Array.isArray(config.bank_letter_enabled)) setBankLetterEnabled([0, 1, 2, 3, 4].map((i) => Number(config.bank_letter_enabled[i]) === 1));
       if (typeof config.bank_change_mode !== 'undefined') setBankChangeMode(clamp(config.bank_change_mode, 1, 2) || 1);
+      if (typeof config.led_preview_live_mode !== 'undefined') setLedPreviewLive(Number(config.led_preview_live_mode) === 1);
       // deviceState e atualizado por pingHttp, nao aqui (load pode ter vindo via USB).
     }
     tryLoad();
@@ -2773,6 +3363,7 @@ function App() {
     if (typeof config.auto_start_mode !== 'undefined') setAutoStartMode(Number(config.auto_start_mode) === 1 ? 'live' : 'bank');
     if (Array.isArray(config.bank_letter_enabled)) setBankLetterEnabled([0, 1, 2, 3, 4].map((i) => Number(config.bank_letter_enabled[i]) === 1));
     if (typeof config.bank_change_mode !== 'undefined') setBankChangeMode(clamp(config.bank_change_mode, 1, 2) || 1);
+    if (typeof config.led_preview_live_mode !== 'undefined') setLedPreviewLive(Number(config.led_preview_live_mode) === 1);
     // deviceState (WiFi) e atualizado por pingHttp, independente do transport
     // de edicao.
   }, [loadGlobalConfig]);
@@ -2792,6 +3383,9 @@ function App() {
       if (typeof bank.switch_mode !== 'undefined') {
         setSwitchMode(Number(bank.switch_mode) === 1 ? 'live' : 'preset');
       }
+      if (Array.isArray(bank.sw_live_on)) {
+        setSwLiveOn(Array.from({ length: 6 }, (_, i) => Number(bank.sw_live_on[i]) === 1));
+      }
       // sw_modes do preset atual. Pulado se ha edicao pendente (dirty),
       // senao o poll sobrescreveria o que o usuario ainda nao salvou.
       if (typeof bank.meta?.sw_modes !== 'undefined' &&
@@ -2799,6 +3393,13 @@ function App() {
         const loaded = parseSwModesStr(bank.meta.sw_modes);
         setSwModes(loaded);
         setSavedSwModes(loaded);
+      }
+      // Params de SW: re-busca quando o preset muda (cobre troca pelo
+      // hardware), respeitando edicao pendente. /sw/params e um GET
+      // separado — so chamado na troca de preset, nao a cada poll.
+      if (swParamsTagRef.current !== currentTagRef.current &&
+          !swParamsDirtyRef.current) {
+        loadSwParams(currentTagRef.current);
       }
     } catch {/* preview */}
   };
@@ -2826,12 +3427,18 @@ function App() {
       currentTagRef.current = `${String.fromCharCode(65 + eli)}${epn}`;
       setBankData(bank.data || '');
       setBankDisplayName(bank.meta?.name || '');
+      if (Array.isArray(bank.sw_live_on)) {
+        setSwLiveOn(Array.from({ length: 6 }, (_, i) => Number(bank.sw_live_on[i]) === 1));
+      }
       // Troca de banco e acao explicita do usuario: carrega os sw_modes
       // do novo preset como estado atual E baseline (descarta edicao nao
       // salva do preset anterior).
       const loadedSwModes = parseSwModesStr(bank.meta?.sw_modes);
       setSwModes(loadedSwModes);
       setSavedSwModes(loadedSwModes);
+      // Troca explicita de preset: recarrega tambem os params de SW
+      // (descarta edicao nao salva do preset anterior).
+      loadSwParams(currentTagRef.current);
       setBankState('idle');
     } catch {
       // Update local state in preview mode
@@ -2927,6 +3534,7 @@ function App() {
       body.set('auto_start_mode', autoStartMode === 'live' ? '1' : '0');
       bankLetterEnabled.forEach((on, i) => body.set(`bank_letter_enabled_${i}`, on ? '1' : '0'));
       body.set('bank_change_mode', String(bankChangeMode));
+      body.set('led_preview_live_mode', ledPreviewLive ? '1' : '0');
       LED_COLORS.forEach((c) => body.set(`color_${c.id}`, c.rgb.join(',')));
 
       await apiCall('POST', '/config/global', body);
@@ -3003,7 +3611,13 @@ function App() {
             switchMode={switchMode}
             onSetSwitchMode={setDeviceSwitchMode}
             swModes={swModes}
+            savedSwModes={savedSwModes}
             onSetSwMode={setSwMode}
+            swParams={swParams}
+            savedSwParams={savedSwParams}
+            onSetSwParam={setSwParam}
+            swLiveOn={swLiveOn}
+            ledPreviewLive={ledPreviewLive}
           />
         )}
         {page === 'global_config' && (
@@ -3018,6 +3632,7 @@ function App() {
             ledColorMode={ledColorMode} setLedColorMode={setLedColorMode}
             letterLedColors={letterLedColors} setLetterLedColors={setLetterLedColors}
             switchLedColors={switchLedColors} setSwitchLedColors={setSwitchLedColors}
+            ledPreviewLive={ledPreviewLive} setLedPreviewLive={setLedPreviewLive}
             presetCount={presetCount}
             deviceState={deviceState}
             usbState={usbState}
@@ -3049,12 +3664,12 @@ function App() {
           saveState={
             page !== 'preset_config' ? saveState
               : switchMode === 'live'
-                ? (swModesStatus === 'idle' && swModesDirty ? 'dirty' : swModesStatus)
+                ? (swModesStatus === 'idle' && liveDirty ? 'dirty' : swModesStatus)
                 : presetSaveStatus}
           onSave={
             page !== 'preset_config' ? saveGlobalConfig
               : switchMode === 'live'
-                ? saveSwModes
+                ? saveLive
                 : () => { const h = presetSaveRef.current; if (h && h.save) h.save(); }}
         />
       </div>

@@ -89,10 +89,13 @@ Cada página é renderizada dentro de `.bf-screen` (moldura tipo iPhone) e usa o
 
 ---
 
-## 3. Página BANK
+## 3. Página SET PRESET
 
-Componente: `PageBank(...)` em [app.jsx:219](app.jsx:219). Props recebidas:
-`bankLetterIndex, presetNumber, bankData, bankState, deviceState, presetCount, onNextLetter, onSelectPreset, onReload`.
+Componente: `PagePresetConfig(...)` em [app.jsx](app.jsx). Primeira aba da tabbar. Abaixo da grade de presets há o seg `PRESET MODE` / `LIVE MODE`, que alterna o conteúdo do card:
+- **PRESET MODE** — edição do preset (`PresetEditorCard`, abas MIDI / DISPLAY / EXTRAS / MONITOR).
+- **LIVE MODE** — configuração dos 6 SWs do preset ativo (`LiveModePanel`); ver §3.6.
+
+O modo é sincronizado com o hardware (botão físico LIVE / `POST /mode`).
 
 ### 3.1 Layout atual
 
@@ -117,10 +120,10 @@ Abaixo da `bf-bank-row` há agora o card **Preset editor** (`PresetEditorCard`, 
 |---|---|---|---|
 | `name` | string ≤ 16 chars | livre; quando vazio, fallback ao `tag` | `''` |
 | `bank` | int | 0–16383 (MSB+LSB combinado) | `0` |
-| `channel` | int | `0`=MUTE; `1..16` | `1` |
+| `channel` | int | `0`=MUTE/OFF; `1..16` | `0` |
 | `nameColorId` | int | id em `BG_COLORS` (paleta visual, 5 cores) | `1` (BRANCO) |
 | `bgColorId` | int | id em `BG_COLORS` | `0` (PRETO) |
-| `backLayersColorId` | int | id em `BG_COLORS` | `0` (reservado, sem efeito) |
+| `backLayersColorId` | int | id em `BG_COLORS` | `0` — fundo da tela no modo LIVE |
 | `tagColorId` | int | id em `BG_COLORS` | `2` (LARANJA, reservado) |
 
 `BG_COLORS` é uma paleta **separada** da `LED_COLORS` (não misturar — LEDs e cores de display são coisas distintas). Atualmente: 0 PRETO, 1 BRANCO, 2 LARANJA, 3 AZUL, 4 VERDE. Adicionar/remover cores aqui propaga para todos os 4 color bars.
@@ -135,28 +138,47 @@ Cada `ColorBar` abre um popover (reaproveita `bf-color-pop` + `bf-modal-backdrop
 
 Classes novas em [app.css](app.css): `.bf-preset-editor`, `.bf-form-row(-3)`, `.bf-field`, `.bf-field-label`, `.bf-field-spacer`, `.bf-input-name`, `.bf-input-num`, `.bf-select(.is-mute)`, `.bf-select-wrap`, `.bf-select-chev`, `.bf-color-bar`, `.bf-bg-pop`, `.bf-bg-grid`, `.bf-bg-swatch`, `.bf-hint`. Em telas ≤ 520px a grade vira `1fr 1fr` e os spacers somem.
 
-**Persistência (firmware, schema v2):** [BANK_MEMORY.h](../BANK_MEMORY.h) foi estendido para `BANK_MEMORY_VERSION = 2` mantendo o formato `tag|key=value|...` por linha em `/bank_memory.txt`. `BankMemoryEntry.data` cresceu para 160 bytes. Os 7 campos do esquema vivem dentro de `data` como pares `key=value`:
+**Persistência (firmware, schema v3):** [BANK_MEMORY.h](../BANK_MEMORY.h) usa **um arquivo por preset** em `/banks/<tag>.txt` (`BANK_MEMORY_VERSION = 3`). Estrutura do arquivo:
 
-| Campo no JSON / HTTP arg | Key em `data` | Range |
-|---|---|---|
-| `name` / `name_raw` | `name` | string ≤ 16 (sem `|` ou `=`) |
-| `midi_bank` | `bank` | 0–16383 |
-| `channel` | `channel` | 0 (MUTE) ou 1–16 |
-| `name_color` | `name_color` | 0–4 |
-| `bg_color` | `bg_color` | 0–4 |
-| `back_layers_color` | `back_layers_color` | 0–4 |
-| `tag_color` | `tag_color` | 0–4 |
+```
+v=3
+<header: key=value|key=value|...>     ← linha 2, o blob `data` (320 bytes)
+sw<N>.<modo>:<key=value|...>          ← linhas 3+, params de SW (esparso, ver §3.6)
+```
 
-Helpers em [BANK_MEMORY.h](../BANK_MEMORY.h): `bankMemoryGetField`, `bankMemoryGetFieldInt`, `bankMemorySetField`, `bankMemorySetFieldInt`, `bankMemorySanitizeValue`, `bankMemoryDisplayName` (resolve `name` ou cai no `tag`). O loader é **tolerante a v1** — campos ausentes assumem default no read, sem migração explícita.
+Campos do header (pares `key=value` dentro de `data`):
 
-**API HTTP** ([WEB_API_BANK.h](../WEB_API_BANK.h)):
+| HTTP arg | Key em `data` | Range | Default |
+|---|---|---|---|
+| `name` / `name_raw` | `name` | string ≤ 16 (sem `\| = :`) | `''` |
+| — | `enabled` | 0/1 | 1 |
+| `midi_bank` | `bank` | 0–16383 | 0 |
+| `channel` | `channel` | 0 (MUTE) ou 1–16 | 0 |
+| `name_color` | `name_color` | id em `DISPLAY_PALETTE` | 4 |
+| `name_border_color` | `name_border_color` | id em `DISPLAY_PALETTE` | 0 |
+| `bg_color` | `bg_color` | id em `DISPLAY_PALETTE` — fundo da tela no modo PRESET/BANK | 0 |
+| `back_layers_color` | `back_layers_color` | id em `DISPLAY_PALETTE` — fundo da tela no modo LIVE | 0 |
+| `tag_color` | `tag_color` | id em `DISPLAY_PALETTE` | 11 |
+| `font_size` | `font_size` | 9/12/18/24 (snap) | 18 |
+| `font_bold` | `font_bold` | 0/1 | 0 |
+| `name_align` | `name_align` | 0–8 (grid 3×3) | 4 |
+| `extra_pcs` | `extra_pcs` | `ch:pg` ×4 (ch 0 = slot off) | `0:0,0:0,0:0,0:0` |
+| `extra_ccs` | `extra_ccs` | `ch:ctl:val` ×2 | `0:0:0,0:0:0` |
+| `sw_modes` | `sw_modes` | 6 índices de modo `i,i,i,i,i,i` (ver §3.6) | `0,0,0,0,0,0` |
 
-- `GET /bank/current` — agora devolve `data` + objeto `meta` parseado (com `name` final pós-fallback e `name_raw` cru).
-- `GET /bank/preset?bank=A2` — lê meta de qualquer slot sem trocar o preset ativo.
-- `POST /bank/preset?bank=A2` — aceita args `name`, `midi_bank`, `channel`, `name_color`, `bg_color`, `back_layers_color`, `tag_color` (todos opcionais). Sanitiza `name`, clampa numéricos, persiste com `bankMemorySave()`. Resposta inclui `changed` e `persisted`.
-- `OPTIONS` em ambos os caminhos.
+Helpers em [BANK_MEMORY.h](../BANK_MEMORY.h): acessores genéricos `bankMemoryGetField(Int)` / `bankMemorySetField(Int)` / `bankMemorySanitizeValue` (operam sobre qualquer blob `key=value|...`); I/O por arquivo `bankMemorySave` (todos os 30, só header — usado pelo erase), `bankMemorySavePresetHeader` (1 arquivo, **preserva** as linhas de SW — usado pelo meta-edit), `bankMemoryWritePresetFull` (restore). As escritas read-modify-write são atômicas (temp + `rename`). Loader tolerante: campos/linhas ausentes caem no default, sem migração explícita.
 
-O webApp já consome: `PresetEditorCard` faz fetch em `useEffect` quando `tag` muda (uma vez por tag, com cache `metaByTag`) e POST com debounce de 450ms a cada alteração. Status visível no rodapé do card (`CARREGANDO` / `SALVANDO` / `SALVO` / `ERRO`).
+**API HTTP** ([WEB_API_BANK.h](../WEB_API_BANK.h)) — espelhada no transporte USB Serial ([USB_CONTROL.h](../USB_CONTROL.h)); o webApp roteia via `apiCall`:
+
+- `GET /bank/current` — devolve `data` + `meta` parseado + `switch_mode` (0 = PRESET, 1 = LIVE).
+- `GET /bank/preset?bank=A2` — lê o header de qualquer slot sem trocar o preset ativo.
+- `POST /bank/preset?bank=A2` — aceita os args do header (todos opcionais; ver tabela). Sanitiza, clampa, persiste com `bankMemorySavePresetHeader` (preserva as linhas de SW). Resposta inclui `changed` e `persisted`.
+- `GET /sw/params?bank=A2` — devolve `{"sw_params":{"sw1.fx1":"<blob>",...}}` com as linhas de SW do preset.
+- `POST /sw/params?bank=A2&sw=1&mode=fx1` — grava o blob de um SW/modo (params no body); body vazio remove a linha. Ver §3.6.
+- `GET /backup` / `POST /restore` — backup **v2**: `presets` (header) + `sw_params` (linhas de SW). Restore aceita v1 e v2, grava o arquivo completo de cada preset e reinicia o ESP32.
+- `OPTIONS` em todos os caminhos.
+
+`PresetEditorCard` busca o header por `tag` (cache `metaByTag`); a edição marca *dirty* e o botão SAVE do rodapé persiste — não há autosave/debounce. Status no rodapé do card (`CARREGANDO` / `SALVANDO` / `SALVO` / `ERRO`).
 
 **Display do device:** `draw_bank_screen` e `draw_live_screen` ([DISPLAY_320.h](../DISPLAY_320.h), [DISPLAY_480.h](../DISPLAY_480.h)) recebem agora `(const char *label, uint16_t bg, uint16_t fg)`. Os callers em [SW_BANK.h](../SW_BANK.h) e [SW_LIVE.h](../SW_LIVE.h) compõem o label via `bankMemoryScreenLabel(...)` e convertem os ids de cor (`bg_color`, `name_color`) em RGB565 via `bankMemoryColorRgb565(id)` (em [BANK_MEMORY.h](../BANK_MEMORY.h) — tabela espelha `BG_COLORS` do webApp). Quando o preset tem `name` preenchido, o display mostra **só o nome** (ex.: `MY SOLO`); quando vazio, cai no formato legado `BANK A1` / `LIVE A1`. Cores acompanham o que o usuário configurar no card "Preset editor".
 
@@ -205,6 +227,32 @@ O webApp já consome: `PresetEditorCard` faz fetch em `useEffect` quando `tag` m
 - `deviceState`: `'online' | 'loading' | 'offline'` controla o eyebrow.
 - `presetCount` é dinâmico (vem do config); o layout assume 6 (3×2 nas 3 colunas restantes). Se mudar para outro número, revisar a grade.
 
+### 3.6 LIVE MODE — modos e parâmetros de SW
+
+Em LIVE MODE o card vira o `LiveModePanel`: 6 botões SW1–SW6, cada um abre um sub-card com o **modo de operação** do SW (picker) e duas abas (engrenagem = parâmetros, display = em breve).
+
+**Modos** (`SW_MODES` em [app.jsx](app.jsx) / `SW_MODE_IDS` em [BANK_MEMORY.h](../BANK_MEMORY.h) — mesma ordem): índice `0 = mute`, `1 = fx1` (STOMP 1), `2 = fx2`, `3 = fx3`, `4 = spin`, `5 = ramp`, `6 = momentary`, `7 = favorite`, `8 = macros`, `9 = tap_tempo`, `10 = single`. O modo ativo de cada SW vai no campo `sw_modes` do header (`i,i,i,i,i,i`).
+
+**Parâmetros por SW** ficam nas linhas 3+ do arquivo do preset, formato `sw<N>.<modo>:<key=value|...>`, esparso — trocar o modo de um SW não apaga os params do modo anterior.
+
+STOMP 1 (`fx1`) — blob `type|num|ch|custom|on|off|start|color`:
+
+| Key | Range | Significado |
+|---|---|---|
+| `type` | 0 = CC, 1 = PC | tipo de mensagem |
+| `num` | 0–127 | número do CC ou programa do PC |
+| `ch` | 0 = OFF, 1–16 | canal MIDI |
+| `custom` | 0/1 | habilita valores on/off próprios (botão `CUSTOM` no editor) |
+| `on` / `off` | 0–127 | valores CC; efetivos só com `custom=1`, senão 127/0 |
+| `start` | 0/1 | estado inicial (LED/toggle) |
+| `color` | 0–14 | cor do LED do SW (índice em `LED_COLORS`) |
+
+PC omite `custom`/`on`/`off`/`start`/`color` (só `num` + `ch`).
+
+**Runtime no firmware:** `swActive` ([BANK_MEMORY.h](../BANK_MEMORY.h)) é um cache do modo ativo de cada SW, **só do preset ativo**, recarregado a cada troca de preset (`swActiveLoadCurrent`). Na chamada do preset (qualquer modo), `swActiveSendInitialMidi` dispara o MIDI inicial de cada SW junto do header. Em LIVE MODE, o toque do footswitch alterna o estado (CC) ou re-envia (PC) e o LED do SW reflete o on/off ([SW_LIVE.h](../SW_LIVE.h) / [LED_STRIP.h](../LED_STRIP.h)).
+
+**webApp:** `LiveModePanel` recebe `swModes` + `swParams` (estado no `App`). O cliente busca `GET /sw/params` na troca de preset, com guarda contra o poll de 1.5s sobrescrever edição pendente. O SAVE do rodapé em LIVE (`saveLive`) grava o `sw_modes` do header e, em seguida, cada linha de SW alterada via `POST /sw/params`. Editor do STOMP 1: `SwFx1Editor` (reusa `bf-extras-row` / `bf-extras-cell`).
+
 ---
 
 ## 4. Diretrizes para implementações futuras na BANK
@@ -231,4 +279,4 @@ O webApp já consome: `PresetEditorCard` faz fetch em `useEffect` quando `tag` m
 
 - O `bankData` ainda chega como prop mas não é mais exibido (após remoção da seção Memória). Se permanecer não usado, pode ser limpo da assinatura de `PageBank` e do call site.
 - `presetCount` variável: confirmar com o usuário se a UI precisa adaptar a grade quando ≠ 6.
-- A página BANK não tem ainda área de edição de preset no webApp — qualquer adição deve ser pensada como card ou modal sobre o shell existente, nunca substituindo o grid principal.
+- Edição de preset (PRESET MODE) e configuração de SW (LIVE MODE) já existem como cards abaixo da grade. Novas adições devem seguir o mesmo padrão — card ou modal sobre o shell, nunca substituindo o grid principal.

@@ -29,6 +29,11 @@
 }
 
 * { box-sizing: border-box; }
+/* Reserva sempre o espaco da barra de rolagem. Sem isso, paginas que
+   rolam (com scrollbar) e paginas que cabem na tela (sem scrollbar) tem
+   larguras uteis diferentes — e o .phone-frame (margin: 0 auto) "pula"
+   ~8px de lado ao navegar entre elas. */
+html { scrollbar-gutter: stable; }
 body {
   margin: 0;
   background:
@@ -448,6 +453,7 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
   padding: 0;
   font-family: var(--font-sys);
   overflow: hidden;
+  box-shadow: 0 0 8px rgba(0,0,0,0.55), 0 0 18px rgba(0,0,0,0.65);
   transition: transform 0.15s ease, box-shadow 0.2s ease;
 }
 .bf-bank-tile .letter {
@@ -750,15 +756,33 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
 }
 
 /* Toggle PRESET MODE / LIVE MODE — fica entre a selecao de banco/preset
-   e o card SET PRESET. Reusa .bf-seg, so um pouco mais alto por ser um
-   controle primario de modo. A margem inferior espelha o gap do
+   e o card SET PRESET. Mantem o FORMATO do .bf-seg (dois botoes lado a
+   lado) mas com o VISUAL dos botoes de preset (.bf-preset): cada botao e
+   um card de gradiente escuro + borda hair + glow preto; o ativo ganha
+   borda e fundo tingidos de accent. A margem inferior espelha o gap do
    .bf-bank-row pra manter o ritmo vertical da pagina. */
 .bf-mode-switch {
   margin: 0 0 18px;
+  background: transparent;  /* tira o "track" do .bf-seg */
+  padding: 0;
+  gap: 10px;                /* mesmo gap do .bf-bank-row */
 }
 .bf-mode-switch button {
   height: 44px;
   font-size: 12px;
+  color: var(--muted);
+  background: linear-gradient(180deg, #1b1b20 0%, #131318 100%);
+  border: 1px solid var(--hair);
+  border-radius: 14px;
+  box-shadow: 0 0 8px rgba(0,0,0,0.55), 0 0 18px rgba(0,0,0,0.65);
+}
+.bf-mode-switch button.is-active {
+  color: var(--text);
+  border-color: var(--tile-color, var(--accent));
+  background:
+    radial-gradient(120% 80% at 50% 0%, color-mix(in srgb, var(--tile-color, var(--accent)) 32%, transparent) 0%, transparent 70%),
+    linear-gradient(180deg, #2a1a10 0%, #18120e 100%);
+  box-shadow: 0 0 8px rgba(0,0,0,0.55), 0 0 18px rgba(0,0,0,0.65);
 }
 
 /* ---- LIVE MODE: grade de switches SW1..SW6 + card de config ---- */
@@ -853,6 +877,60 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
+
+/* Editor de params do STOMP 1 (aba engrenagem). Reusa bf-extras-row /
+   bf-extras-cell, mas sem a coluna do indice — duas colunas iguais. */
+.bf-sw-fx1 {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 4px 2px;
+}
+.bf-sw-fx1 .bf-extras-row {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  column-gap: 16px;
+  row-gap: 12px;
+}
+.bf-sw-fx1 .bf-extras-cell .bf-input,
+.bf-sw-fx1 .bf-input-num {
+  min-height: 58px;
+}
+/* Linha MIDI TEST + preview do LED — botao a esquerda, FootswitchArc a
+   direita, alinhados pelo centro vertical. */
+.bf-sw-fx1 .bf-extras-row.bf-sw-fx1-test {
+  align-items: center;
+  margin-top: 6px;
+}
+/* Wrapper do FootswitchArc: centraliza e atenua quando o teste esta OFF
+   (preview do estado on/off do STOMP). */
+.bf-sw-fx1-led {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 96px;
+  transition: opacity 0.15s ease;
+}
+.bf-sw-fx1-led .bf-fsw-glyph {
+  width: 88px;
+  height: 88px;
+}
+.bf-sw-fx1-led.is-off { opacity: 0.35; }
+/* Botões toggle (CUSTOM, START ON/OFF): apagados por padrão,
+   "acendem" em laranja quando ativos. */
+.bf-sw-fx1 .bf-input-num.is-active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent-glow), 0 8px 24px -10px var(--accent-glow);
+}
+
+/* STOMP 2 (fx2): duas secoes (CLICK CURTO / CLICK LONGO) empilhadas, cada
+   uma com o mesmo layout do STOMP 1 (.bf-sw-fx1). */
+.bf-sw-fx2 {
+  display: flex;
+  flex-direction: column;
+}
+.bf-sw-fx2 .bf-section-label:first-child { padding-top: 2px; }
 
 /* Grade dos 10 modos de operacao de SW (aba engrenagem do card) */
 .bf-sw-mode-grid {
@@ -1103,6 +1181,16 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
   font-size: 10px;
   color: var(--muted);
   letter-spacing: 0.18em;
+}
+.bf-fsw-label-inside {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  color: var(--muted);
+  pointer-events: none;
 }
 .bf-fsw-grid {
   display: grid;
@@ -1914,6 +2002,20 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
   font-size: 11px;
   letter-spacing: 0.06em;
   padding-left: 0;
+}
+.bf-monitor-sw-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-left: 16px;
+  padding: 2px 0 2px 12px;
+  border-left: 2px solid var(--accent);
+}
+.bf-monitor-sw {
+  color: var(--muted);
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
 }
 
 /* Botoes Tamanho/Negrito no DISPLAY tab batem a altura dos color bars (32px). */
