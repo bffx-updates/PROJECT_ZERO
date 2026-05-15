@@ -1205,9 +1205,12 @@ const SW_MODES = [
   // MUTE = padrao de um SW sem modo salvo (silencioso, nao faz nada).
   { id: 'mute',      title: 'MUTE',      sub: 'MUTE' },
   // STOMP-1/2/3 = stomps; a diferenca esta no gesto que cada um trata:
-  { id: 'fx1',       title: 'STOMP - 1', sub: 'STOMP' },        // click
-  { id: 'fx2',       title: 'STOMP - 2', sub: 'DUAL STOMP' },   // click + long click
-  { id: 'fx3',       title: 'STOMP - 3', sub: 'TRIAL STOMP' },  // click + long click + reclick
+  // STOMP unificado: comporta-se como classico, dual ou trial conforme
+  // o numero de secoes com canal configurado (so A / A+B / A+B+C).
+  { id: 'fx1',       title: 'STOMP',     sub: 'CLICK / LONG / RECLICK' },
+  // Legados — mantidos pra dados antigos, escondidos do picker.
+  { id: 'fx2',       title: 'STOMP - 2', sub: 'DUAL STOMP', hidden: true },
+  { id: 'fx3',       title: 'STOMP - 3', sub: 'TRIAL STOMP', hidden: true },
   { id: 'spin',      title: 'SPIN',      sub: 'SPIN' },
   { id: 'ramp',      title: 'RAMPA',     sub: 'RAMP' },
   { id: 'momentary', title: 'MOMENTARY', sub: 'MOMENTARY' },
@@ -1244,35 +1247,27 @@ function swModesToStr(obj) {
 // guarda como linhas sw<N>.<modo>:<key=value|...> e a API entrega/recebe
 // o blob. Aqui o shape e { [sw]: { [modeId]: {campos} } }.
 //
-// STOMP 1 (fx1): num 0..127 (numero do CC); ch 0=OFF 1..16; custom 0/1
-// (habilita on/off proprios); on/off 0..127 (efetivos so com custom=1,
-// senao 127/0); start 0/1 (estado inicial); color 0..14 (indice em
-// LED_COLORS — cor do LED do SW aceso em LIVE). STOMP 1 e so CC — o envio
-// por PC sera um modo separado.
-//
-// STOMP 2 (fx2): duas secoes iguais a do STOMP 1. A secao A (click curto)
-// reusa as mesmas chaves do fx1 (num/ch/custom/on/off/start/color); a
-// secao B (click longo) usa as chaves com sufixo 2 (num2/ch2/custom2/
-// on2/off2/start2/color2). Cada secao alterna um CC proprio.
-//
-// STOMP 3 (fx3): tres secoes — A (click curto, sem sufixo), B (click
-// longo, sufixo 2), C (reclick / duplo-click, sufixo 3). Cada secao
-// alterna um CC e acende seu pixel: A=pixel1, B=pixel2, C=pixel3.
+// STOMP (fx1, unificado): ate 3 secoes — A (sem sufixo), B (sufixo 2),
+// C (sufixo 3). Cada secao tem num 0..127 (CC), ch 0=OFF 1..16, custom
+// 0/1, on/off 0..127, start 0/1, color 0..14. O comportamento de uso
+// adapta conforme quantas secoes tem canal valido (1..16):
+//   so A      -> STOMP classico: tap = toggle, segurar = momentaneo.
+//   A + B     -> tap = A, long-press = B (sem momentaneo).
+//   A + B + C -> tap (apos 350ms) = A, long-press = B, duplo-click = C.
+// Os legados fx2 (14 campos) e fx3 (21 campos, mesmas chaves do fx1)
+// seguem existindo pra dados antigos, mas o picker so oferece fx1.
 function DEFAULT_SW_PARAMS(modeId) {
-  if (modeId === 'fx1') {
-    return { num: 0, ch: 0, custom: 0, on: 127, off: 0, start: 0, color: 1 };
+  if (modeId === 'fx1' || modeId === 'fx3') {
+    return {
+      num: 0, ch: 0, custom: 0, on: 127, off: 0, start: 0, color: 1,
+      num2: 0, ch2: 0, custom2: 0, on2: 127, off2: 0, start2: 0, color2: 1,
+      num3: 0, ch3: 0, custom3: 0, on3: 127, off3: 0, start3: 0, color3: 1,
+    };
   }
   if (modeId === 'fx2') {
     return {
       num: 0, ch: 0, custom: 0, on: 127, off: 0, start: 0, color: 1,
       num2: 0, ch2: 0, custom2: 0, on2: 127, off2: 0, start2: 0, color2: 1,
-    };
-  }
-  if (modeId === 'fx3') {
-    return {
-      num: 0, ch: 0, custom: 0, on: 127, off: 0, start: 0, color: 1,
-      num2: 0, ch2: 0, custom2: 0, on2: 127, off2: 0, start2: 0, color2: 1,
-      num3: 0, ch3: 0, custom3: 0, on3: 127, off3: 0, start3: 0, color3: 1,
     };
   }
   return {};
@@ -1320,11 +1315,35 @@ function swParamsToApiBody(fields) {
 function buildLivePressEvent(sw, section, nowOn, savedSwModes, savedSwParams) {
   const id = (savedSwModes && savedSwModes[sw]) || 'mute';
   const userParams = savedSwParams && savedSwParams[sw] && savedSwParams[sw][id];
-  if (id === 'fx1' && section === 0) {
-    const p = { ...DEFAULT_SW_PARAMS('fx1'), ...(userParams || {}) };
-    const value = p.custom === 1 ? (nowOn ? p.on : p.off) : (nowOn ? 127 : 0);
-    return { sw, sectionLabel: '', cc: Number(p.num), ch: Number(p.ch),
-             value, on: nowOn };
+  // fx1 unificado e fx3 (legado): tres secoes; o label depende do tier
+  // configurado pra ficar coerente com o picker (so A = sem label;
+  // A+B = CURTO/LONGO; A+B+C = CURTO/LONGO/RECLICK).
+  if (id === 'fx1' || id === 'fx3') {
+    const p = { ...DEFAULT_SW_PARAMS(id), ...(userParams || {}) };
+    const chOK = (v) => v >= 1 && v <= 16;
+    const hasB = chOK(Number(p.ch2));
+    const hasC = chOK(Number(p.ch3));
+    const tierLabel = (s) => {
+      if (hasC) return s === 0 ? 'CURTO' : s === 1 ? 'LONGO' : 'RECLICK';
+      if (hasB) return s === 0 ? 'CURTO' : 'LONGO';
+      return '';  // tier 1: sem sufixo
+    };
+    if (section === 0) {
+      const value = p.custom === 1 ? (nowOn ? p.on : p.off) : (nowOn ? 127 : 0);
+      return { sw, sectionLabel: tierLabel(0), cc: Number(p.num), ch: Number(p.ch),
+               value, on: nowOn };
+    }
+    if (section === 1 && hasB) {
+      const value = p.custom2 === 1 ? (nowOn ? p.on2 : p.off2) : (nowOn ? 127 : 0);
+      return { sw, sectionLabel: tierLabel(1), cc: Number(p.num2), ch: Number(p.ch2),
+               value, on: nowOn };
+    }
+    if (section === 2 && hasC) {
+      const value = p.custom3 === 1 ? (nowOn ? p.on3 : p.off3) : (nowOn ? 127 : 0);
+      return { sw, sectionLabel: tierLabel(2), cc: Number(p.num3), ch: Number(p.ch3),
+               value, on: nowOn };
+    }
+    return null;
   }
   if (id === 'fx2' && (section === 0 || section === 1)) {
     const p = { ...DEFAULT_SW_PARAMS('fx2'), ...(userParams || {}) };
@@ -1335,22 +1354,6 @@ function buildLivePressEvent(sw, section, nowOn, savedSwModes, savedSwParams) {
     }
     const value = p.custom2 === 1 ? (nowOn ? p.on2 : p.off2) : (nowOn ? 127 : 0);
     return { sw, sectionLabel: 'LONGO', cc: Number(p.num2), ch: Number(p.ch2),
-             value, on: nowOn };
-  }
-  if (id === 'fx3') {
-    const p = { ...DEFAULT_SW_PARAMS('fx3'), ...(userParams || {}) };
-    if (section === 0) {
-      const value = p.custom === 1 ? (nowOn ? p.on : p.off) : (nowOn ? 127 : 0);
-      return { sw, sectionLabel: 'CURTO', cc: Number(p.num), ch: Number(p.ch),
-               value, on: nowOn };
-    }
-    if (section === 1) {
-      const value = p.custom2 === 1 ? (nowOn ? p.on2 : p.off2) : (nowOn ? 127 : 0);
-      return { sw, sectionLabel: 'LONGO', cc: Number(p.num2), ch: Number(p.ch2),
-               value, on: nowOn };
-    }
-    const value = p.custom3 === 1 ? (nowOn ? p.on3 : p.off3) : (nowOn ? 127 : 0);
-    return { sw, sectionLabel: 'RECLICK', cc: Number(p.num3), ch: Number(p.ch3),
              value, on: nowOn };
   }
   return null;
@@ -1436,13 +1439,10 @@ function SwModeIcon({ id }) {
   }
 }
 
-// Editor de parametros do modo STOMP 1 (fx1). Reusa os componentes de
-// campo do resto do app (bf-extras-row / bf-extras-cell / bf-select-wrap,
-// botoes bf-input-num e FootswitchArc pro LED). Edicao e local — a
-// persistencia acontece no SAVE do rodape (saveLive). STOMP 1 e so CC; o
-// envio por PC sera um modo separado. Com CUSTOM ligado aparecem os campos
-// Valor On / Valor Off.
-function SwFx1Editor({ sw, params, onChange, ledPreviewLive, liveOn }) {
+// DEPRECATED — substituido pelo SwStompEditor unificado. Mantido apenas
+// como referencia historica; nao e mais montado pelo LiveModePanel.
+// Pode ser removido em uma limpeza futura.
+function SwFx1EditorLegacy({ sw, params, onChange, ledPreviewLive, liveOn }) {
   const isCustom = params.custom === 1;
   const numOptions = Array.from({ length: 128 }, (_, n) => n);
   // Estado de teste local: o botao MIDI TEST alterna on/off, dispara o CC
@@ -1804,22 +1804,37 @@ function SwFx2Editor({ sw, params, onChange, ledPreviewLive, liveOn }) {
   );
 }
 
-// Editor de parametros do modo STOMP 3 (fx3). Tres secoes: A (click curto)
-// no pixel 1, B (click longo) no pixel 2, C (reclick / duplo-click) no
-// pixel 3. Cada secao usa um CC proprio. Toggle CLICK CURTO / CLICK LONGO
-// / RECLICK alterna qual secao esta visivel.
-function SwFx3Editor({ sw, params, onChange, ledPreviewLive, liveOn }) {
+// Editor unificado do modo STOMP (fx1). Tres tabs (CLICK CURTO / CLICK
+// LONGO / RECLICK), cada um configurando uma secao independente. O
+// comportamento de uso e o layout do LED adaptam conforme quantas secoes
+// tem canal valido:
+//   so A      -> STOMP classico (3 pixels, tap toggle + momentaneo).
+//   A + B     -> DUAL STOMP (pixels externos = A, central = B).
+//   A + B + C -> TRIAL STOMP (pixel 1 = A, pixel 2 = B, pixel 3 = C).
+// Pixel -> arco no FootswitchArc: 0 = inferior, 1 = sup esq, 2 = sup dir.
+// Tambem serve o legado fx3 (mesmas chaves).
+function SwStompEditor({ sw, params, onChange, ledPreviewLive, liveOn }) {
   const [activeSection, setActiveSection] = useState(0);
-  // Pixel -> arco (FootswitchArc): pixel 1 = arco 1 (sup esq), pixel 2 =
-  // arco 0 (inferior), pixel 3 = arco 2 (sup dir).
-  const litArcsBySection = [[1], [0], [2]];
-  // So a secao A recebe o estado live; B e C caem no `start`/`start2`/`start3`.
+  const chOK = (v) => {
+    const n = Number(v);
+    return n >= 1 && n <= 16;
+  };
+  const hasB = chOK(params.ch2);
+  const hasC = chOK(params.ch3);
+  // Preview do LED adapta o mapeamento pixel -> arco conforme o tier.
+  const litArcsBySection = hasC
+    ? [[1], [0], [2]]            // tier 3: 1 arco por secao
+    : hasB
+      ? [[1, 2], [0], []]         // tier 2: A externos, B central
+      : [[0, 1, 2], [], []];     // tier 1: A acende os 3 arcos
+  // So a secao A recebe o estado live (vem de sw_live_on); B e C caem
+  // no `start` configurado.
   const liveBySection = [liveOn, undefined, undefined];
   const labels = ['CLICK CURTO', 'CLICK LONGO', 'RECLICK'];
   return (
     <div className="bf-sw-fx2">
       <div className="bf-seg bf-sw-fx2-tabs" role="tablist"
-           aria-label="Secao do STOMP 3">
+           aria-label="Secao do STOMP">
         {labels.map((label, idx) => (
           <button
             key={idx}
@@ -1928,13 +1943,13 @@ function LiveModePanel({ presetCount, swModes, onSetSwMode, swParams, onSetSwPar
 
           <div className="bf-sw-card-body">
             {cardTab === 'gear' && (
-              modeOf(selectedSw) === 'fx1' ? (
-                <SwFx1Editor
+              (modeOf(selectedSw) === 'fx1' || modeOf(selectedSw) === 'fx3') ? (
+                <SwStompEditor
                   key={selectedSw}
                   sw={selectedSw}
-                  params={(swParams && swParams[selectedSw] && swParams[selectedSw].fx1)
-                    || DEFAULT_SW_PARAMS('fx1')}
-                  onChange={(patch) => onSetSwParam(selectedSw, 'fx1', patch)}
+                  params={(swParams && swParams[selectedSw] && swParams[selectedSw][modeOf(selectedSw)])
+                    || DEFAULT_SW_PARAMS(modeOf(selectedSw))}
+                  onChange={(patch) => onSetSwParam(selectedSw, modeOf(selectedSw), patch)}
                   ledPreviewLive={ledPreviewLive}
                   liveOn={Array.isArray(swLiveOn) ? swLiveOn[selectedSw - 1] : undefined}
                 />
@@ -1945,16 +1960,6 @@ function LiveModePanel({ presetCount, swModes, onSetSwMode, swParams, onSetSwPar
                   params={(swParams && swParams[selectedSw] && swParams[selectedSw].fx2)
                     || DEFAULT_SW_PARAMS('fx2')}
                   onChange={(patch) => onSetSwParam(selectedSw, 'fx2', patch)}
-                  ledPreviewLive={ledPreviewLive}
-                  liveOn={Array.isArray(swLiveOn) ? swLiveOn[selectedSw - 1] : undefined}
-                />
-              ) : modeOf(selectedSw) === 'fx3' ? (
-                <SwFx3Editor
-                  key={selectedSw}
-                  sw={selectedSw}
-                  params={(swParams && swParams[selectedSw] && swParams[selectedSw].fx3)
-                    || DEFAULT_SW_PARAMS('fx3')}
-                  onChange={(patch) => onSetSwParam(selectedSw, 'fx3', patch)}
                   ledPreviewLive={ledPreviewLive}
                   liveOn={Array.isArray(swLiveOn) ? swLiveOn[selectedSw - 1] : undefined}
                 />
@@ -1993,7 +1998,7 @@ function LiveModePanel({ presetCount, swModes, onSetSwMode, swParams, onSetSwPar
               </button>
             </div>
             <div className="bf-sw-mode-grid">
-              {SW_MODES.map((m) => (
+              {SW_MODES.filter((m) => !m.hidden).map((m) => (
                 <button
                   key={m.id}
                   type="button"
@@ -3348,20 +3353,22 @@ function App() {
       const id = (savedSwModes && savedSwModes[sw]) || 'mute';
       const mode = SW_MODES.find((m) => m.id === id) || SW_MODES[0];
       const params = savedSwParams && savedSwParams[sw] && savedSwParams[sw][id];
-      if (id === 'fx1') {
-        const p = { ...DEFAULT_SW_PARAMS('fx1'), ...(params || {}) };
-        return `${mode.sub} CC ${Number(p.num)} - CH ${fmtCh(Number(p.ch))}`;
+      // fx1 unificado e fx3 (legado): mostra so as secoes com canal valido.
+      if (id === 'fx1' || id === 'fx3') {
+        const p = { ...DEFAULT_SW_PARAMS(id), ...(params || {}) };
+        const parts = [`CC ${Number(p.num)} - CH ${fmtCh(Number(p.ch))}`];
+        if (fmtCh(Number(p.ch2)) !== 'OFF') {
+          parts.push(`CC ${Number(p.num2)} - CH ${fmtCh(Number(p.ch2))}`);
+        }
+        if (fmtCh(Number(p.ch3)) !== 'OFF') {
+          parts.push(`CC ${Number(p.num3)} - CH ${fmtCh(Number(p.ch3))}`);
+        }
+        return `STOMP ${parts.join(' / ')}`;
       }
       if (id === 'fx2') {
         const p = { ...DEFAULT_SW_PARAMS('fx2'), ...(params || {}) };
         return `${mode.sub} CC ${Number(p.num)} - CH ${fmtCh(Number(p.ch))}` +
                ` / CC ${Number(p.num2)} - CH ${fmtCh(Number(p.ch2))}`;
-      }
-      if (id === 'fx3') {
-        const p = { ...DEFAULT_SW_PARAMS('fx3'), ...(params || {}) };
-        return `${mode.sub} CC ${Number(p.num)} - CH ${fmtCh(Number(p.ch))}` +
-               ` / CC ${Number(p.num2)} - CH ${fmtCh(Number(p.ch2))}` +
-               ` / CC ${Number(p.num3)} - CH ${fmtCh(Number(p.ch3))}`;
       }
       return mode.sub;
     });
