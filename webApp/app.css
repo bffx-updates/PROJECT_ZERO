@@ -1050,7 +1050,7 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
   padding: 8px 12px;
 }
 .bf-sw-tap .bf-tap-slot-row {
-  grid-template-columns: 28px minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: 28px minmax(0, 1fr) minmax(0, 1fr) auto;
   gap: 10px;
   align-items: end;
 }
@@ -1058,23 +1058,59 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
   align-self: end;
   padding-bottom: 8px;
 }
+.bf-tap-mode-btn {
+  appearance: none;
+  align-self: end;
+  min-height: 40px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 1px solid var(--hair);
+  background: linear-gradient(180deg, #1b1b20 0%, #131318 100%);
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color 0.15s ease, color 0.15s ease,
+              box-shadow 0.15s ease, background 0.15s ease,
+              transform 0.08s ease;
+}
+.bf-tap-mode-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(255, 165, 0, 0.08);
+}
+.bf-tap-mode-btn:active {
+  transform: scale(0.97);
+}
+.bf-tap-mode-btn.is-mode-2 {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: linear-gradient(180deg, rgba(255, 165, 0, 0.18) 0%,
+                                       rgba(255, 140, 0, 0.06) 100%);
+  box-shadow: 0 0 0 1px rgba(255, 165, 0, 0.20) inset;
+}
 
 /* SINGLE — botao + na ponta inferior direita da pilha de slots: revela
    o proximo slot ate totalizar 4. Esconde quando todos visiveis. */
 .bf-sw-single .bf-single-add-row {
   display: flex;
   justify-content: flex-end;
-  margin: 4px 2px 0;
+  margin: 6px 2px 2px;
 }
 .bf-sw-single .bf-single-add {
   appearance: none;
-  width: 32px;
-  height: 32px;
+  width: 36px;
+  height: 36px;
   border-radius: 50%;
-  border: 1px solid var(--hair);
-  background: linear-gradient(180deg, #1b1b20 0%, #131318 100%);
-  color: var(--muted);
-  font-size: 18px;
+  border: 1px dashed rgba(255, 165, 0, 0.45);
+  background:
+    radial-gradient(circle at 50% 35%, rgba(255, 165, 0, 0.10), transparent 70%),
+    linear-gradient(180deg, #1b1b20 0%, #131318 100%);
+  color: var(--accent);
+  font-size: 20px;
   font-weight: 700;
   line-height: 1;
   cursor: pointer;
@@ -1082,11 +1118,68 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.15s ease;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset,
+              0 2px 6px rgba(0, 0, 0, 0.35);
+  transition: border-color 0.15s ease, color 0.15s ease,
+              box-shadow 0.15s ease, transform 0.08s ease;
 }
 .bf-sw-single .bf-single-add:hover {
+  border-style: solid;
+  border-color: var(--accent);
+  color: #ffd089;
+  box-shadow: 0 0 0 3px rgba(255, 165, 0, 0.10),
+              0 2px 8px rgba(255, 140, 0, 0.25);
+}
+.bf-sw-single .bf-single-add:active {
+  transform: scale(0.94);
+}
+
+/* TAP TEMPO — par de botoes ADD TAP / REMOVE alinhado a direita, no mesmo
+   visual dos campos (mesma altura/borda/font) pra ficar harmonioso. */
+.bf-tap-slot-actions {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin: 12px 2px 2px;
+  padding-top: 12px;
+  border-top: 1px solid var(--hair);
+}
+.bf-tap-action {
+  appearance: none;
+  min-height: 36px;
+  padding: 0 14px;
+  border-radius: 8px;
+  border: 1px solid var(--hair);
+  background: linear-gradient(180deg, #1b1b20 0%, #131318 100%);
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease,
+              box-shadow 0.15s ease, transform 0.08s ease;
+}
+.bf-tap-action:hover {
   border-color: var(--accent);
   color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(255, 165, 0, 0.08);
+}
+.bf-tap-action:active {
+  transform: scale(0.97);
+}
+.bf-tap-action-add {
+  border-style: dashed;
+  border-color: rgba(255, 165, 0, 0.45);
+  color: var(--accent);
+}
+.bf-tap-action-add:hover {
+  border-style: solid;
+}
+.bf-tap-action-remove:hover {
+  border-color: #ff6b6b;
+  color: #ff8b8b;
+  box-shadow: 0 0 0 3px rgba(255, 107, 107, 0.10);
 }
 .bf-sw-macros .bf-macros-slot-fields .bf-input,
 .bf-sw-macros .bf-macros-slot-fields .bf-select {
@@ -1191,22 +1284,34 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
   justify-content: center;
   padding: 20px;
 }
+/* Modal padrao — visual unificado com o popup de cores do LED (mesma
+   sheet centralizada, mesmo gradient/raio/sombra/animacao). */
 .bf-modal {
   width: 100%;
   max-width: 420px;
   max-height: 82vh;
   overflow-y: auto;
-  background: linear-gradient(180deg, #1a1a1e 0%, #131318 100%);
+  background: linear-gradient(180deg, #1c1c20 0%, #141418 100%);
   border: 1px solid var(--hair-strong);
-  border-radius: 22px;
+  border-radius: 24px;
   padding: 18px;
-  box-shadow: 0 20px 60px rgba(0,0,0,0.7);
+  box-shadow:
+    0 30px 80px rgba(0,0,0,0.7),
+    0 0 0 1px rgba(255,255,255,0.04) inset;
+  animation: bf-pop-in-center 0.18s ease;
+}
+@keyframes bf-pop-in-center {
+  from { opacity: 0; transform: scale(0.94); }
+  to   { opacity: 1; transform: scale(1); }
 }
 .bf-modal-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 16px;
+  gap: 12px;
+  padding-bottom: 14px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid var(--hair);
 }
 .bf-modal-title {
   font-family: var(--font-mono);
@@ -1218,18 +1323,19 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
 }
 .bf-modal-close {
   appearance: none;
-  border: 0;
-  background: var(--card-2);
-  color: var(--text);
   width: 32px;
   height: 32px;
-  border-radius: 10px;
-  cursor: pointer;
+  border-radius: 50%;
+  border: 0;
+  background: var(--card-3);
+  color: var(--muted);
   display: grid;
   place-items: center;
+  cursor: pointer;
   flex-shrink: 0;
+  transition: all 0.15s ease;
 }
-.bf-modal-close:hover { background: var(--hair-strong); }
+.bf-modal-close:hover { background: var(--card-2); color: var(--text); }
 
 /* ---- Row (list) ---- */
 .bf-row {
@@ -1756,11 +1862,15 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
 .bf-modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0,0,0,0.25);
-  backdrop-filter: blur(6px) saturate(110%);
-  -webkit-backdrop-filter: blur(6px) saturate(110%);
+  background: rgba(10, 10, 12, 0.55);
+  backdrop-filter: blur(14px) saturate(120%);
+  -webkit-backdrop-filter: blur(14px) saturate(120%);
   z-index: 70;
   animation: bf-fade-in 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
 }
 @keyframes bf-fade-in {
   from { opacity: 0; }
@@ -2594,16 +2704,16 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
    (.bf-color-pop), reaproveita .bf-color-pop-grid e .bf-swatch, e adiciona
    secoes roláveis (Transparencia / Solid / G1 / G2 / Custom / Misc). */
 .bf-palette-pop {
-  width: min(340px, calc(100vw - 32px));
+  width: min(320px, calc(100vw - 32px));
   max-height: min(86vh, 720px);
   display: flex;
   flex-direction: column;
 }
-.bf-palette-pop .bf-color-pop-head { margin-bottom: 10px; padding-bottom: 12px; }
+.bf-palette-pop .bf-color-pop-head { padding-bottom: 14px; margin-bottom: 14px; }
 .bf-palette-scroll {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 14px;
   overflow-y: auto;
   padding-right: 6px;
   margin-right: -6px;
@@ -2616,7 +2726,10 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
   border-radius: 3px;
 }
 .bf-palette-scroll::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.16); }
-.bf-palette-pop .bf-color-pop-grid { grid-template-columns: repeat(4, 1fr); }
+.bf-palette-pop .bf-color-pop-grid {
+  grid-template-columns: repeat(5, 1fr);
+  gap: 10px;
+}
 .bf-palette-section { display: flex; flex-direction: column; gap: 8px; }
 .bf-palette-section-title {
   font-family: var(--font-mono);

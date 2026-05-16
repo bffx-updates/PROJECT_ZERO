@@ -428,7 +428,7 @@ function FootswitchArc({ label, colorId, onChange, litArcs, labelInside }) {
         {labelInside && <span className="bf-fsw-label bf-fsw-label-inside">{label}</span>}
       </button>
       {!labelInside && <span className="bf-fsw-label">{label}</span>}
-      {open && (
+      {open && ReactDOM.createPortal(
         <>
         <div className="bf-modal-backdrop" onClick={() => setOpen(false)} />
         <div className="bf-color-pop">
@@ -456,7 +456,8 @@ function FootswitchArc({ label, colorId, onChange, litArcs, labelInside }) {
             ))}
           </div>
         </div>
-        </>
+        </>,
+        document.body
       )}
     </div>
   );
@@ -581,7 +582,7 @@ function ColorBar({ label, colorId, onChange, restrictTypes }) {
         aria-haspopup="dialog"
         aria-expanded={open}
       />
-      {open && (
+      {open && ReactDOM.createPortal(
         <>
           <div className="bf-modal-backdrop" onClick={() => setOpen(false)} />
           <div className="bf-color-pop bf-palette-pop">
@@ -624,7 +625,8 @@ function ColorBar({ label, colorId, onChange, restrictTypes }) {
               ))}
             </div>
           </div>
-        </>
+        </>,
+        document.body
       )}
     </div>
   );
@@ -1342,8 +1344,11 @@ function serializeSingleSlots(slots) {
 
 // TAP TEMPO — slots ainda mais simples: so canal e CC# (valor fixo 127
 // na hora do disparo, sem type CC/PC). Storage: "ch:num,ch:num,..." (4).
-function emptyTapSlot() { return { ch: 0, num: 0 }; }
-function emptyTapSlotsStr() { return '0:0,0:0,0:0,0:0'; }
+// TAP TEMPO slot: ch + num + mode. mode 1 = so CC+127 (classico). mode 2
+// = CC+127 seguido de CC+0 (pulse). Formato compacto "ch:num:mode";
+// formato legado "ch:num" (sem mode) cai em mode=1.
+function emptyTapSlot() { return { ch: 0, num: 0, mode: 1 }; }
+function emptyTapSlotsStr() { return '0:0:1,0:0:1,0:0:1,0:0:1'; }
 function parseTapSlots(str) {
   const out = [emptyTapSlot(), emptyTapSlot(), emptyTapSlot(), emptyTapSlot()];
   if (typeof str !== 'string' || !str) return out;
@@ -1353,9 +1358,11 @@ function parseTapSlots(str) {
     if (p.length < 2) continue;
     const ch = parseInt(p[0], 10);
     const num = parseInt(p[1], 10);
+    const mode = p.length >= 3 ? parseInt(p[2], 10) : 1;
     out[i] = {
       ch: Number.isFinite(ch) ? clamp(ch, 0, 16) : 0,
       num: Number.isFinite(num) ? clamp(num, 0, 127) : 0,
+      mode: mode === 2 ? 2 : 1,
     };
   }
   return out;
@@ -1363,7 +1370,7 @@ function parseTapSlots(str) {
 function serializeTapSlots(slots) {
   const four = (slots || []).slice(0, 4);
   while (four.length < 4) four.push(emptyTapSlot());
-  return four.map((s) => `${s.ch|0}:${s.num|0}`).join(',');
+  return four.map((s) => `${s.ch|0}:${s.num|0}:${s.mode === 2 ? 2 : 1}`).join(',');
 }
 
 function DEFAULT_SW_PARAMS(modeId) {
@@ -1701,9 +1708,12 @@ function buildLivePressEvent(sw, section, nowOn, savedSwModes, savedSwParams) {
   if (id === 'tap_tempo' && section === 0) {
     const p = { ...DEFAULT_SW_PARAMS('tap_tempo'), ...(userParams || {}) };
     const slots = parseTapSlots(p.tslots || '');
-    const messages = slots
-      .filter((s) => s.ch >= 1 && s.ch <= 16)
-      .map((s) => ccMsg(s.ch, s.num, 127));
+    const messages = [];
+    for (const s of slots) {
+      if (s.ch < 1 || s.ch > 16) continue;
+      messages.push(ccMsg(s.ch, s.num, 127));
+      if (s.mode === 2) messages.push(ccMsg(s.ch, s.num, 0));
+    }
     return {
       sw, modeLabel: 'TAP TEMPO', sectionLabel: '', on: null,
       messages,
@@ -2546,9 +2556,11 @@ function SwMomentaryEditor({ sw, params, onChange, ledPreviewLive }) {
   );
 }
 
-// TAP TEMPO — um slot: so canal + CC# (valor fixo 127 no firmware).
+// TAP TEMPO — um slot: canal + CC# + mode. mode 1 = so CC+127 (classico);
+// mode 2 = CC+127 seguido de CC+0 (pulse).
 function SwTapTempoSlot({ idx, slot, onChange }) {
   const numOptions = Array.from({ length: 128 }, (_, n) => n);
+  const mode = slot.mode === 2 ? 2 : 1;
   return (
     <div className="bf-macros-slot bf-tap-slot">
       <div className="bf-extras-row bf-tap-slot-row">
@@ -2584,6 +2596,16 @@ function SwTapTempoSlot({ idx, slot, onChange }) {
             <span className="bf-select-chev">▾</span>
           </div>
         </label>
+        <button
+          type="button"
+          className={'bf-tap-mode-btn is-mode-' + mode}
+          onClick={() => onChange({ mode: mode === 1 ? 2 : 1 })}
+          aria-label={'Modo do slot: ' + (mode === 1
+            ? 'CC + 127' : 'CC + 127 seguido de CC + 0')}
+          title={mode === 1
+            ? 'MODE 1 — envia so CC+127'
+            : 'MODE 2 — envia CC+127 e depois CC+0'}
+        >MODE {mode}</button>
       </div>
     </div>
   );
@@ -2631,17 +2653,6 @@ function SwTapTempoEditor({ sw, params, onChange, ledPreviewLive }) {
         <SwTapTempoSlot key={i} idx={i} slot={s}
           onChange={(patch) => updateSlot(i, patch)} />
       ))}
-      {visibleCount < 4 && (
-        <div className="bf-single-add-row">
-          <button
-            type="button"
-            className="bf-single-add"
-            onClick={() => setVisibleCount(visibleCount + 1)}
-            aria-label="Adicionar mais um slot"
-            title="Adicionar mais um slot"
-          >+</button>
-        </div>
-      )}
       <div className="bf-extras-row bf-sw-fx1-test">
         <button
           type="button"
@@ -2661,6 +2672,34 @@ function SwTapTempoEditor({ sw, params, onChange, ledPreviewLive }) {
           />
         </div>
       </div>
+      {(visibleCount > 1 || visibleCount < 4) && (
+        <div className="bf-tap-slot-actions">
+          {visibleCount > 1 && (
+            <button
+              type="button"
+              className="bf-tap-action bf-tap-action-remove"
+              onClick={() => {
+                const last = visibleCount - 1;
+                if (slots[last] && (slots[last].ch !== 0 || slots[last].num !== 0)) {
+                  updateSlot(last, { ch: 0, num: 0 });
+                }
+                setVisibleCount(visibleCount - 1);
+              }}
+              aria-label="Remover ultimo slot"
+              title="Remover ultimo slot"
+            >REMOVE</button>
+          )}
+          {visibleCount < 4 && (
+            <button
+              type="button"
+              className="bf-tap-action bf-tap-action-add"
+              onClick={() => setVisibleCount(visibleCount + 1)}
+              aria-label="Adicionar mais um slot de tap"
+              title="Adicionar mais um slot de tap"
+            >ADD TAP</button>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -3030,7 +3069,7 @@ function LiveModePanel({ presetCount, swModes, onSetSwMode, swParams, onSetSwPar
         </div>
       )}
 
-      {pickerOpen && selectedSw !== null && (
+      {pickerOpen && selectedSw !== null && ReactDOM.createPortal(
         <div className="bf-modal-backdrop" onClick={() => setPickerOpen(false)}>
           <div
             className="bf-modal"
@@ -3066,7 +3105,8 @@ function LiveModePanel({ presetCount, swModes, onSetSwMode, swParams, onSetSwPar
               ))}
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </>
   );
