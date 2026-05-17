@@ -23,6 +23,7 @@ Saida:
 """
 from pathlib import Path
 from PIL import Image
+import re
 import sys
 
 SRC_DIR = Path(__file__).parent.parent / "icons" / "source"
@@ -69,7 +70,15 @@ def emit_array(name: str, data: bytes) -> str:
 
 
 def main() -> int:
-    src_files = sorted(SRC_DIR.glob("*.png"))
+    # Ordem NUMERICA pelo numero no nome do arquivo (ICO1, ICO2, ..., ICO10),
+    # nao alfabetica (que daria ICO1, ICO10, ICO11, ..., ICO2). Sem essa
+    # natural-sort o webApp pede icon_id=N mas o firmware busca g_icons[N-1]
+    # apontando pra arquivo errado. Files sem numero vao pro final, sorted
+    # alfabeticamente entre si.
+    def num_key(p):
+        m = re.search(r'\d+', p.stem)
+        return (0, int(m.group())) if m else (1, p.stem)
+    src_files = sorted(SRC_DIR.glob("*.png"), key=num_key)
     if not src_files:
         print(f"ERRO: nenhum PNG em {SRC_DIR}", file=sys.stderr)
         return 1
