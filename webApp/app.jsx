@@ -5042,14 +5042,59 @@ function HardTestCard() {
 // bank_memory.txt, que é o escopo do backup.
 function BackupRestoreCard() {
   const [status, setStatus] = useState({ kind: 'idle', msg: '' });
+  // progress: { phase, pct, bytes, total } — pct/total opcionais.
+  const [progress, setProgress] = useState(null);
+
+  const fmtKB = (b) => {
+    if (!b) return '0 KB';
+    if (b < 1024) return b + ' B';
+    return (b / 1024).toFixed(1) + ' KB';
+  };
 
   const doBackup = useCallback(async () => {
-    setStatus({ kind: 'loading', msg: 'Gerando backup...' });
+    setStatus({ kind: 'loading', msg: 'Conectando...' });
+    setProgress({ phase: 'requesting', pct: 0 });
     try {
-      // apiCall roteia HTTP ou USB conforme transporte ativo. Em ambos
-      // retorna o JSON parseado — re-stringifica para download.
-      const json = await apiCall('GET', '/backup');
-      const text = JSON.stringify(json);
+      // Pra ter progresso real, usa fetch + stream reader em vez do
+      // apiCall (que faria .text()/.json() de uma vez). USB nao suporta
+      // streaming via Web Serial: cai pro caminho antigo (apiCall).
+      let text;
+      if (_transport.usbConnected) {
+        // USB nao tem progresso real — mostra so "baixando".
+        setProgress({ phase: 'downloading', pct: null });
+        const json = await apiCall('GET', '/backup');
+        text = JSON.stringify(json);
+        setProgress({ phase: 'downloading', pct: 100, bytes: text.length });
+      } else {
+        const base = DEVICE_API || '';
+        const resp = await fetch(`${base}/backup`, { method: 'GET' });
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        // Content-Length pode nao vir em chunked transfer — tratamos null.
+        const total = parseInt(resp.headers.get('Content-Length') || '0', 10);
+        const reader = resp.body && resp.body.getReader();
+        if (!reader) {
+          text = await resp.text();
+        } else {
+          const decoder = new TextDecoder();
+          const chunks = [];
+          let received = 0;
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            chunks.push(value);
+            received += value.length;
+            setProgress({
+              phase: 'downloading',
+              pct: total ? Math.round((received / total) * 100) : null,
+              bytes: received,
+              total,
+            });
+          }
+          text = chunks.map((c) => decoder.decode(c, { stream: true })).join('')
+               + decoder.decode();
+        }
+      }
+      setProgress({ phase: 'saving', pct: 100 });
       const blob = new Blob([text], { type: 'application/json' });
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
@@ -5059,10 +5104,19 @@ function BackupRestoreCard() {
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(a.href);
-      const count = json.presets ? Object.keys(json.presets).length : 0;
-      setStatus({ kind: 'ok', msg: `Backup OK · ${count} preset(s) modificado(s)` });
+      let count = 0;
+      try {
+        const json = JSON.parse(text);
+        count = json.presets ? Object.keys(json.presets).length : 0;
+      } catch {/* ignore parse — file ainda foi baixado */}
+      setStatus({
+        kind: 'ok',
+        msg: `Backup OK · ${count} preset(s) · ${fmtKB(text.length)}`,
+      });
+      setProgress(null);
     } catch (e) {
       setStatus({ kind: 'error', msg: 'Falha: ' + e.message });
+      setProgress(null);
     }
   }, []);
 
@@ -5073,9 +5127,11 @@ function BackupRestoreCard() {
     input.onchange = async (e) => {
       const file = e.target.files && e.target.files[0];
       if (!file) return;
-      setStatus({ kind: 'loading', msg: 'Aplicando restore...' });
+      setStatus({ kind: 'loading', msg: 'Lendo arquivo...' });
+      setProgress({ phase: 'reading', pct: 0 });
       try {
         const text = await file.text();
+        setProgress({ phase: 'reading', pct: 100, bytes: text.length });
         // Valida estrutura antes de enviar pro device
         const parsed = JSON.parse(text);
         if (!parsed.presets || typeof parsed.presets !== 'object') {
@@ -5086,10 +5142,52 @@ function BackupRestoreCard() {
         if (_transport.usbConnected && text.length > 1900) {
           throw new Error('arquivo muito grande pro USB (use WiFi)');
         }
-        const result = await apiCall('POST', '/restore', text);
-        setStatus({ kind: 'ok', msg: `Restore OK · ${result.applied} preset(s) aplicado(s)` });
+        setStatus({ kind: 'loading', msg: 'Enviando ao dispositivo...' });
+        // Pra ter progresso de UPLOAD usa XMLHttpRequest (fetch nao expoe
+        // upload progress). Cai pro apiCall em USB.
+        let result;
+        if (_transport.usbConnected) {
+          setProgress({ phase: 'uploading', pct: null, bytes: 0, total: text.length });
+          result = await apiCall('POST', '/restore', text);
+        } else {
+          const base = DEVICE_API || '';
+          result = await new Promise((resolve, reject) => {
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', `${base}/restore`);
+            xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+            xhr.upload.onprogress = (evt) => {
+              setProgress({
+                phase: 'uploading',
+                pct: evt.lengthComputable
+                  ? Math.round((evt.loaded / evt.total) * 100)
+                  : null,
+                bytes: evt.loaded,
+                total: evt.total,
+              });
+            };
+            xhr.upload.onload = () => {
+              setProgress({ phase: 'applying', pct: null });
+            };
+            xhr.onload = () => {
+              if (xhr.status >= 200 && xhr.status < 300) {
+                try { resolve(JSON.parse(xhr.responseText || '{}')); }
+                catch { resolve({}); }
+              } else {
+                reject(new Error('HTTP ' + xhr.status));
+              }
+            };
+            xhr.onerror = () => reject(new Error('network error'));
+            xhr.send(text);
+          });
+        }
+        setStatus({
+          kind: 'ok',
+          msg: `Restore OK · ${result.applied || 0} preset(s) aplicado(s) · ${fmtKB(text.length)}`,
+        });
+        setProgress(null);
       } catch (err) {
         setStatus({ kind: 'error', msg: 'Falha: ' + err.message });
+        setProgress(null);
       }
     };
     input.click();
@@ -5122,6 +5220,38 @@ function BackupRestoreCard() {
           RESTAURAR
         </button>
       </div>
+      {progress && (
+        <div className="bf-backup-progress">
+          <div className="bf-backup-progress-track">
+            <div
+              className={'bf-backup-progress-fill' +
+                         (progress.pct == null ? ' is-indeterminate' : '')}
+              style={progress.pct != null
+                ? { width: progress.pct + '%' }
+                : undefined}
+            />
+          </div>
+          <div className="bf-backup-progress-info">
+            <span>{
+              progress.phase === 'requesting' ? 'Conectando…'
+              : progress.phase === 'downloading' ? 'Baixando…'
+              : progress.phase === 'saving' ? 'Salvando arquivo…'
+              : progress.phase === 'reading' ? 'Lendo arquivo…'
+              : progress.phase === 'uploading' ? 'Enviando…'
+              : progress.phase === 'applying' ? 'Aplicando no dispositivo…'
+              : '…'
+            }</span>
+            <span className="bf-backup-progress-bytes">
+              {progress.pct != null && `${progress.pct}%`}
+              {typeof progress.bytes === 'number' && (
+                <> · {fmtKB(progress.bytes)}
+                  {progress.total ? ` / ${fmtKB(progress.total)}` : ''}
+                </>
+              )}
+            </span>
+          </div>
+        </div>
+      )}
       {status.kind !== 'idle' && (
         <p
           style={{
