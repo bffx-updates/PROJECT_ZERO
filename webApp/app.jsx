@@ -5096,7 +5096,10 @@ function BackupRestoreCard() {
           result = await new Promise((resolve, reject) => {
             const xhr = new XMLHttpRequest();
             xhr.open('POST', `${base}/restore`);
-            xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+            // text/plain e o que o ESP precisa pra popular webServer.arg("plain").
+            // Application/x-www-form-urlencoded seria parseado como pares key=val
+            // e o body JSON do restore nao tem '=' — daria 400 "missing body".
+            xhr.setRequestHeader('Content-Type', 'text/plain;charset=UTF-8');
             xhr.upload.onprogress = (evt) => {
               setProgress({
                 phase: 'uploading',
