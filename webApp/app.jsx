@@ -1478,21 +1478,13 @@ function DEFAULT_SW_PARAMS(modeId) {
     };
   }
   if (modeId === 'macros') {
-    // MACROS: 3 secoes (A=click curto, B=click longo, C=reclick) iguais
-    // ao STOMP unificado, mas cada secao tem 4 slots (CC ou PC) com
-    // valor ON e OFF independentes (-1 = OFF/pula direcao).
-    // mslotsN e armazenado como string compacta "t:ch:num:on:off,...".
-    // at_presetN e start[N] sao toggles independentes por secao:
-    //   at_preset=0 -> AGUARDA LIVE (nao dispara na chamada do preset)
-    //   at_preset=1 + start=1 -> START ON (dispara valores ON, liveOn=true)
-    //   at_preset=1 + start=0 -> START OFF (dispara valores OFF, liveOn=false)
+    // MACROS: uma secao unica com 4 slots (CC ou PC) com valor ON e OFF
+    // (-1 = OFF/pula direcao). mslots e string compacta "t:ch:num:on:off,...".
+    // at_preset + start replicam o padrao do STOMP: at_preset=0 aguarda
+    // LIVE; at_preset=1 dispara ON ou OFF na chamada conforme `start`.
     return {
       mslots: emptyMslotsStr(),
       at_preset: 1, start: 0, color: 1,
-      mslots2: emptyMslotsStr(),
-      at_preset2: 1, start2: 0, color2: 1,
-      mslots3: emptyMslotsStr(),
-      at_preset3: 1, start3: 0, color3: 1,
     };
   }
   if (modeId === 'tap_tempo') {
@@ -1580,9 +1572,8 @@ function parseSwParamsObj(obj) {
       const raw = pair.slice(eq + 1);
       // Chaves compostas string (ex.: MACROS mslots[N] = "t:ch:num:on:off,...")
       // ficam como string; os demais campos sao numericos.
-      if (k && (k === 'mslots' || k === 'mslots2' || k === 'mslots3' ||
-                k === 'sslots' || k === 'tslots' || k === 'mom_slots' ||
-                k === 'spin_slots')) {
+      if (k && (k === 'mslots' || k === 'sslots' || k === 'tslots' ||
+                k === 'mom_slots' || k === 'spin_slots')) {
         fields[k] = raw;
       } else {
         const v = parseInt(raw, 10);
@@ -1702,37 +1693,28 @@ function buildSnapshotSingle(sw, userParams) {
 function buildSnapshotMacros(sw, userParams) {
   const p = { ...DEFAULT_SW_PARAMS('macros'), ...(userParams || {}) };
   const chOK = (s) => s.ch >= 1 && s.ch <= 16;
-  const hasB = parseMslots(p.mslots2 || '').some(chOK);
-  const hasC = parseMslots(p.mslots3 || '').some(chOK);
-  const tierLabel = (s) => {
-    if (hasC) return s === 0 ? 'CURTO' : s === 1 ? 'LONGO' : 'RECLICK';
-    if (hasB) return s === 0 ? 'CURTO' : 'LONGO';
-    return '';
-  };
-  const sections = [];
-  for (let s = 0; s < 3; s++) {
-    const suf = s === 0 ? '' : s === 1 ? '2' : '3';
-    if (p['at_preset' + suf] !== 1) continue;
-    const slots = parseMslots(p['mslots' + suf] || '');
-    const active = slots.filter(chOK);
-    if (active.length === 0) continue;
-    const startOn = p['start' + suf] === 1;
-    const messages = [];
-    for (const slot of active) {
-      const v = startOn ? slot.on : slot.off;
-      if (v < 0) continue;
-      messages.push(slot.t === 1
-        ? pcMsg(slot.ch, v)
-        : ccMsg(slot.ch, slot.num, v));
-    }
-    if (messages.length === 0) continue;
-    sections.push({
-      label: tierLabel(s),
+  if (p.at_preset !== 1) return { sw, modeLabel: 'MACROS', sections: [] };
+  const slots = parseMslots(p.mslots || '');
+  const active = slots.filter(chOK);
+  if (active.length === 0) return { sw, modeLabel: 'MACROS', sections: [] };
+  const startOn = p.start === 1;
+  const messages = [];
+  for (const slot of active) {
+    const v = startOn ? slot.on : slot.off;
+    if (v < 0) continue;
+    messages.push(slot.t === 1
+      ? pcMsg(slot.ch, v)
+      : ccMsg(slot.ch, slot.num, v));
+  }
+  if (messages.length === 0) return { sw, modeLabel: 'MACROS', sections: [] };
+  return {
+    sw, modeLabel: 'MACROS',
+    sections: [{
+      label: '',
       flags: [startOn ? 'START ON' : 'START OFF'],
       messages,
-    });
-  }
-  return { sw, modeLabel: 'MACROS', sections };
+    }],
+  };
 }
 
 function buildSnapshotTap(sw, userParams) {
@@ -1901,16 +1883,7 @@ function buildLivePressEvent(sw, section, nowOn, savedSwModes, savedSwParams) {
 
   if (id === 'macros') {
     const p = { ...DEFAULT_SW_PARAMS('macros'), ...(userParams || {}) };
-    const slotKey = section === 0 ? 'mslots' : section === 1 ? 'mslots2' : 'mslots3';
-    const slots = parseMslots(p[slotKey] || '');
-    const chOK = (s) => s.ch >= 1 && s.ch <= 16;
-    const hasB = parseMslots(p.mslots2 || '').some(chOK);
-    const hasC = parseMslots(p.mslots3 || '').some(chOK);
-    const tierLabel = (s) => {
-      if (hasC) return s === 0 ? 'CURTO' : s === 1 ? 'LONGO' : 'RECLICK';
-      if (hasB) return s === 0 ? 'CURTO' : 'LONGO';
-      return '';
-    };
+    const slots = parseMslots(p.mslots || '');
     const messages = [];
     for (const s of slots) {
       if (s.ch < 1 || s.ch > 16) continue;
@@ -1919,7 +1892,7 @@ function buildLivePressEvent(sw, section, nowOn, savedSwModes, savedSwParams) {
       messages.push(s.t === 1 ? pcMsg(s.ch, v) : ccMsg(s.ch, s.num, v));
     }
     return {
-      sw, modeLabel: 'MACROS', sectionLabel: tierLabel(section), on: nowOn,
+      sw, modeLabel: 'MACROS', sectionLabel: '', on: nowOn,
       messages,
     };
   }
@@ -2743,8 +2716,9 @@ function SwMacrosSlot({ idx, slot, onChange }) {
   );
 }
 
-// MACROS — uma secao (CLICK CURTO / CLICK LONGO / RECLICK). 4 slots +
-// botao START (dispara com preset) + LED color + botao FIRE de teste.
+// MACROS — secao unica. 4 slots + botao START (dispara com preset) +
+// LED color + botao FIRE de teste. Mantida parametrizada (section/suf)
+// como vestigio do design antigo de 3 secoes; hoje so usa section=0.
 const MACROS_MAX_SLOTS = 4;
 function SwMacrosSection({ sw, section, label, litArcsOn,
                           params, onChange, ledPreviewLive, liveOn }) {
@@ -2889,49 +2863,17 @@ function SwMacrosSection({ sw, section, label, litArcsOn,
   );
 }
 
-// MACROS — editor com 3 tabs adaptativos como o STOMP unificado. Cada
-// tab tem 4 slots configuraveis. Tier (1/2/3) detectado pela presenca
-// de slot com canal valido em cada secao.
+// MACROS — uma unica secao com 4 slots (CC ou PC) + START + LED. Sem
+// tabs (foram removidos junto com os modos LONGO e RECLICK).
 function SwMacrosEditor({ sw, params, onChange, ledPreviewLive, liveOn }) {
-  const [activeSection, setActiveSection] = useState(0);
-  const sectionHasSlots = (sufKey) => {
-    const slots = parseMslots(params[sufKey] || '');
-    return slots.some((s) => s.ch >= 1 && s.ch <= 16);
-  };
-  const hasB = sectionHasSlots('mslots2');
-  const hasC = sectionHasSlots('mslots3');
-  // Mesma logica do SwStompEditor pra litArcs por tier:
-  const litArcsBySection = hasC
-    ? [[1], [0], [2]]            // tier 3
-    : hasB
-      ? [[1, 2], [0], []]        // tier 2
-      : [[0, 1, 2], [], []];     // tier 1
-  const liveBySection = [liveOn, undefined, undefined];
-  const labels = ['CLICK CURTO', 'CLICK LONGO', 'RECLICK'];
   return (
-    <div className="bf-sw-fx2">
-      <div className="bf-seg bf-sw-fx2-tabs" role="tablist"
-           aria-label="Secao do MACROS">
-        {labels.map((lbl, idx) => (
-          <button
-            key={idx}
-            type="button"
-            role="tab"
-            aria-selected={activeSection === idx}
-            className={activeSection === idx ? 'is-active' : ''}
-            onClick={() => setActiveSection(idx)}
-          >{lbl}</button>
-        ))}
-      </div>
-      <SwMacrosSection
-        key={activeSection}
-        sw={sw} section={activeSection}
-        litArcsOn={litArcsBySection[activeSection]}
-        params={params} onChange={onChange}
-        ledPreviewLive={ledPreviewLive}
-        liveOn={liveBySection[activeSection]}
-      />
-    </div>
+    <SwMacrosSection
+      sw={sw} section={0}
+      litArcsOn={[0, 1, 2]}
+      params={params} onChange={onChange}
+      ledPreviewLive={ledPreviewLive}
+      liveOn={liveOn}
+    />
   );
 }
 
