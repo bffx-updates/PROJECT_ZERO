@@ -50,19 +50,28 @@ async function ensureCleanData() {
   if (existsSync(iconsDir)) await rm(iconsDir, { recursive: true, force: true });
 }
 
+async function copyDirRecursive(srcDir, outDir) {
+  await mkdir(outDir, { recursive: true });
+  const entries = await readdir(srcDir, { withFileTypes: true });
+  for (const e of entries) {
+    const srcPath = join(srcDir, e.name);
+    const outPath = join(outDir, e.name);
+    if (e.isDirectory()) {
+      await copyDirRecursive(srcPath, outPath);
+    } else if (e.isFile()) {
+      await copyFile(srcPath, outPath);
+    }
+  }
+}
+
 async function copyPwaAssets() {
   // Manifest
   const src = join(WEBAPP_DIR, 'manifest.webmanifest');
   if (existsSync(src)) await copyFile(src, join(DATA_DIR, 'manifest.webmanifest'));
-  // Icons
+  // Icons (inclui icons/sw/ com os 51 PNGs por SW — recursivo).
   const iconsSrc = join(WEBAPP_DIR, 'icons');
   if (existsSync(iconsSrc)) {
-    const iconsOut = join(DATA_DIR, 'icons');
-    await mkdir(iconsOut, { recursive: true });
-    const files = await readdir(iconsSrc);
-    for (const f of files) {
-      await copyFile(join(iconsSrc, f), join(iconsOut, f));
-    }
+    await copyDirRecursive(iconsSrc, join(DATA_DIR, 'icons'));
   }
 }
 
@@ -253,14 +262,25 @@ async function report() {
     total += s.size;
     console.log(`  ${name.padEnd(22)} ${formatBytes(s.size).padStart(10)}`);
   }
+  // icons/ pode ter subdirs (icons/sw/ICO*.png). Lista files diretos
+  // individualmente; subdirs sao agregados em uma linha "icons/sw/ (N files)".
   const iconsDir = join(DATA_DIR, 'icons');
   if (existsSync(iconsDir)) {
-    const files = await readdir(iconsDir);
-    for (const f of files) {
-      const p = join(iconsDir, f);
-      const s = await stat(p);
-      total += s.size;
-      console.log(`  ${('icons/' + f).padEnd(22)} ${formatBytes(s.size).padStart(10)}`);
+    const entries = await readdir(iconsDir, { withFileTypes: true });
+    for (const e of entries) {
+      const p = join(iconsDir, e.name);
+      if (e.isFile()) {
+        const s = await stat(p);
+        total += s.size;
+        console.log(`  ${('icons/' + e.name).padEnd(22)} ${formatBytes(s.size).padStart(10)}`);
+      } else if (e.isDirectory()) {
+        const sub = await readdir(p);
+        let sz = 0;
+        for (const f of sub) sz += (await stat(join(p, f))).size;
+        total += sz;
+        const label = `icons/${e.name}/ (${sub.length})`;
+        console.log(`  ${label.padEnd(22)} ${formatBytes(sz).padStart(10)}`);
+      }
     }
   }
   const pct = ((total / PARTITION_SIZE) * 100).toFixed(1);

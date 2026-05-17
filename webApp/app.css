@@ -3221,3 +3221,186 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
   color: var(--muted);
   padding-left: 2px;
 }
+
+/* ─── SW DISPLAY (icone + cores por SW) ───────────────────────────── */
+
+/* Substitui o conteudo padrao do .bf-sw-btn quando ele renderiza o tile
+   com icone. Tile e a moldura quadrada com background/borda da config
+   + icone ou texto centralizado + sigla pequena no rodape. */
+.bf-sw-btn-tile {
+  padding: 6px;
+}
+.bf-sw-tile {
+  position: relative;
+  border-radius: 8px;
+  background: #0a0a0c;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  overflow: hidden;
+}
+.bf-sw-tile-text {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 14px;
+  letter-spacing: 0.08em;
+  text-align: center;
+  padding: 0 4px;
+}
+.bf-sw-tile-sigla {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  margin-top: 2px;
+  opacity: 0.95;
+}
+.bf-sw-tile-label {
+  position: absolute;
+  bottom: -22px;
+  left: 0; right: 0;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--muted);
+}
+.bf-sw-btn-tile .bf-sw-tile-label { display: none; }
+
+/* O label SW1..SW6 fica EMBAIXO do tile, fora do container; precisa
+   compensar o padding do botao pra nao ser cortado. */
+.bf-sw-btn-tile {
+  padding-bottom: 22px;
+}
+.bf-sw-btn-tile .bf-sw-tile-label { display: block; }
+
+/* Editor da aba DISPLAY (3 toggles de cor + preview + sigla) */
+.bf-sw-disp {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.bf-sw-disp-colors {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 10px;
+}
+.bf-sw-disp-color {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.bf-sw-disp-color-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: var(--muted);
+  text-align: center;
+}
+.bf-sw-disp-color-swatches {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+.bf-sw-disp-color-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  flex: 1;
+}
+.bf-sw-disp-color-cell .bf-field { gap: 0; }
+.bf-sw-disp-color-cell .bf-field-label { display: none; }
+.bf-sw-disp-color-cell .bf-color-bar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1px solid var(--hair);
+}
+.bf-sw-disp-color-state {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: var(--muted);
+}
+.bf-sw-disp-color-sep {
+  color: var(--muted);
+  font-size: 14px;
+  padding: 0 2px;
+  align-self: center;
+}
+
+.bf-sw-disp-preview-row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 14px;
+  align-items: center;
+}
+.bf-sw-disp-preview {
+  appearance: none;
+  border: 1px solid var(--hair);
+  background: #0a0a0c;
+  border-radius: 14px;
+  padding: 8px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-color 0.15s ease;
+}
+.bf-sw-disp-preview:hover { border-color: var(--hair-strong); }
+
+.bf-sw-disp-toggles {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.bf-sw-disp-toggles .bf-input-num {
+  min-height: 44px;
+  font-size: 13px;
+}
+
+.bf-sw-disp-sigla .bf-input {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* Modal do picker de icones — grid 6 colunas com 51 + algumas vazias.
+   Cada celula mostra o icone tingido na cor on/off do estado atual. */
+.bf-sw-icon-picker {
+  max-width: 460px;
+  width: 92vw;
+}
+.bf-sw-icon-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 6px;
+  padding: 14px;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+.bf-sw-icon-cell {
+  appearance: none;
+  background: #0e0e12;
+  border: 1px solid var(--hair);
+  border-radius: 8px;
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+.bf-sw-icon-cell:hover { border-color: var(--hair-strong); }
+.bf-sw-icon-cell.is-active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 18%, #0e0e12);
+}

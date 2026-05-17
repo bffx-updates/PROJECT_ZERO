@@ -1223,6 +1223,105 @@ const SW_MODES = [
   { id: 'single',    title: 'SINGLE',    sub: 'SINGLE' },
 ];
 
+// ─── SW DISPLAY (icone + cores por SW) ──────────────────────────────
+// Lista dos 51 PNGs servidos por webApp/icons/sw/<id>.png. Cada SW pode
+// escolher um deles (mode='icon') ou exibir so a sigla (mode='text').
+// A cor nao esta no bitmap — e aplicada via CSS mask-image no render.
+const SW_ICONS = Array.from({ length: 51 }, (_, i) => `ico${i + 1}`);
+
+// Defaults por SW. mode 'icon' + ico1 + sigla vazia + cores transparentes
+// (que o PaletteRender resolve pra "sem efeito visual").
+function DEFAULT_SW_DISPLAY() {
+  return {
+    icon_id: 1,           // 1..51 (indice no SW_ICONS)
+    mode: 'icon',         // 'icon' | 'text'
+    sigla: '',            // rodape do icone (icon mode) ou texto central (text mode)
+    ic_off: 0, ic_on: 4,  // cor do ICONE off/on (DISPLAY_PALETTE)
+    bg_off: 0, bg_on: 0,  // cor do FUNDO (back)
+    br_off: 0, br_on: 0,  // cor da BORDA
+  };
+}
+
+const SW_DISPLAY_NUMERIC_KEYS =
+  ['icon_id', 'ic_off', 'ic_on', 'bg_off', 'bg_on', 'br_off', 'br_on'];
+
+// Lê os 9 campos do SW <i> de dentro do objeto meta cru da API
+// (formato "swdisp1=icon_id=5|mode=text|sigla=STOMP|...|"). Defaults
+// preenchem campos ausentes. Pode aceitar tambem chaves curtas (s1i, s1m
+// etc.) — usado em backups/legados — mas o serializador novo emite os
+// nomes completos pra ser auto-descritivo.
+function parseSwDisplayOne(blob) {
+  const out = DEFAULT_SW_DISPLAY();
+  for (const pair of String(blob || '').split('|')) {
+    const eq = pair.indexOf('=');
+    if (eq < 0) continue;
+    const k = pair.slice(0, eq);
+    const v = pair.slice(eq + 1);
+    if (k === 'mode') out.mode = v === 'text' ? 'text' : 'icon';
+    else if (k === 'sigla') out.sigla = v;
+    else if (SW_DISPLAY_NUMERIC_KEYS.includes(k)) {
+      const n = parseInt(v, 10);
+      if (Number.isFinite(n)) out[k] = n;
+    }
+  }
+  return out;
+}
+
+// Extrai sw_display dos 6 SWs do meta retornado pela API. Cada entry vem
+// como string compacta na chave swdispN. Sempre retorna 6 entries com
+// defaults se faltar algum.
+function parseSwDisplayFromMeta(rawMeta) {
+  const out = {};
+  for (let sw = 1; sw <= 6; sw++) {
+    const blob = (rawMeta && rawMeta['swdisp' + sw]) || '';
+    out[sw] = parseSwDisplayOne(blob);
+  }
+  return out;
+}
+
+// Serializa um SW pro formato compacto "icon_id=...|mode=...|sigla=...|...".
+// Encode minimo da sigla pra nao quebrar o separador '|' (raro mas
+// possivel se o usuario digitar). Chaves numericas viram String(n).
+function serializeSwDisplayOne(d) {
+  const safe = { ...DEFAULT_SW_DISPLAY(), ...(d || {}) };
+  const sigla = String(safe.sigla || '').replace(/\|/g, ' ');
+  const parts = [
+    `icon_id=${safe.icon_id|0}`,
+    `mode=${safe.mode === 'text' ? 'text' : 'icon'}`,
+    `sigla=${sigla}`,
+    `ic_off=${safe.ic_off|0}`, `ic_on=${safe.ic_on|0}`,
+    `bg_off=${safe.bg_off|0}`, `bg_on=${safe.bg_on|0}`,
+    `br_off=${safe.br_off|0}`, `br_on=${safe.br_on|0}`,
+  ];
+  return parts.join('|');
+}
+
+// Insere os 6 swdispN no body de POST /bank/preset.
+function swDisplayToApiBody(disp, body) {
+  for (let sw = 1; sw <= 6; sw++) {
+    body.set('swdisp' + sw,
+             serializeSwDisplayOne(disp && disp[sw]));
+  }
+}
+
+// Defaults pros 6 SWs — usado quando ainda nao carregou nada.
+function defaultSwDisplayMap() {
+  const out = {};
+  for (let sw = 1; sw <= 6; sw++) out[sw] = DEFAULT_SW_DISPLAY();
+  return out;
+}
+
+// Compara dois mapas de swDisplay pra dirty tracking.
+function swDisplayEqual(a, b) {
+  if (a === b) return true;
+  for (let sw = 1; sw <= 6; sw++) {
+    const A = serializeSwDisplayOne(a && a[sw]);
+    const B = serializeSwDisplayOne(b && b[sw]);
+    if (A !== B) return false;
+  }
+  return true;
+}
+
 // sw_modes no PRESET: 6 indices em SW_MODES, formato compacto "i,i,i,i,i,i".
 // "0,4,0,..." <-> { 1:'mute', 2:'spin', ... }. Indice fora de faixa cai
 // em 'mute' (0) — cobre presets antigos sem o campo.
@@ -3913,7 +4012,229 @@ function SwSingleEditor({ sw, params, onChange, ledPreviewLive, isActiveSingle }
   );
 }
 
-function LiveModePanel({ presetCount, swModes, onSetSwMode, swParams, onSetSwParam, ledPreviewLive, swLiveOn, lastSingleSw }) {
+// Resolve um colorId da DISPLAY_PALETTE pra um CSS color string. Cores
+// transparentes viram 'transparent'. Gradients: pega o hex inicial (no
+// modal de SW estamos pintando icone, nao precisa de fidelidade de
+// gradiente — so a primeira parada).
+function paletteCss(colorId) {
+  const id = clamp(colorId, 0, DISPLAY_PALETTE.length - 1);
+  const c = DISPLAY_PALETTE[id];
+  if (!c || c.type === DISP_TYPE.TRANSPARENT) return 'transparent';
+  return hexToCss(c.hex);
+}
+
+// Renderiza um icone PNG mascarado com cor arbitraria via CSS mask-image.
+// O PNG e a forma; a cor vem do background. Browsers modernos (Safari
+// iOS 14+, Chrome 4+, Firefox 53+) suportam isso de forma simples.
+function SwIconImg({ iconId, color, size }) {
+  const id = Math.max(1, Math.min(51, parseInt(iconId, 10) || 1));
+  const url = `./icons/sw/ICO${id}.png`;
+  return (
+    <span
+      className="bf-sw-icon-img"
+      style={{
+        display: 'inline-block',
+        width: size + 'px',
+        height: Math.round(size * 72 / 95) + 'px',  // mantem aspecto 95:72
+        background: color,
+        WebkitMask: `url('${url}') no-repeat center / contain`,
+        mask: `url('${url}') no-repeat center / contain`,
+      }}
+      aria-hidden="true"
+    />
+  );
+}
+
+// Tile de SW com moldura (background) + borda + icone OU texto centralizado.
+// Reusado em LIVE MODE (botoes SW1..SW6) e no preview do editor display.
+// `on` decide entre cores OFF e ON. labelBelow controla se mostra o
+// "SW1" embaixo (no painel LIVE) — falso no preview do editor.
+function SwDisplayTile({ disp, on, size, labelBelow, isActive }) {
+  const d = { ...DEFAULT_SW_DISPLAY(), ...(disp || {}) };
+  const icColor  = paletteCss(on ? d.ic_on  : d.ic_off);
+  const bgColor  = paletteCss(on ? d.bg_on  : d.bg_off);
+  const brColor  = paletteCss(on ? d.br_on  : d.br_off);
+  const isText   = d.mode === 'text';
+  const sigla    = String(d.sigla || '').trim();
+  // Moldura quadrada-ish; iconSize ~70% da moldura.
+  const iconW = Math.round(size * 0.55);
+  return (
+    <div
+      className={'bf-sw-tile' + (isActive ? ' is-active-frame' : '')}
+      style={{
+        width: size + 'px',
+        height: size + 'px',
+        background: bgColor === 'transparent' ? undefined : bgColor,
+        borderColor: brColor === 'transparent' ? undefined : brColor,
+        borderWidth: brColor === 'transparent' ? undefined : '2px',
+        borderStyle: brColor === 'transparent' ? undefined : 'solid',
+      }}
+    >
+      {isText ? (
+        <span className="bf-sw-tile-text" style={{ color: icColor }}>
+          {sigla || '—'}
+        </span>
+      ) : (
+        <>
+          <SwIconImg iconId={d.icon_id} color={icColor} size={iconW} />
+          {sigla && (
+            <span className="bf-sw-tile-sigla" style={{ color: icColor }}>
+              {sigla}
+            </span>
+          )}
+        </>
+      )}
+      {labelBelow && (
+        <span className="bf-sw-tile-label">{labelBelow}</span>
+      )}
+    </div>
+  );
+}
+
+// Modal picker dos 51 icones. Grid 6 colunas, tinta usando a cor on
+// (visualizacao mais "limpa") — o usuario ve a forma + cor escolhida.
+function SwIconPicker({ open, onClose, currentId, previewColor, onPick }) {
+  if (!open) return null;
+  return ReactDOM.createPortal(
+    <div className="bf-modal-backdrop" onClick={onClose}>
+      <div
+        className="bf-modal bf-sw-icon-picker"
+        role="dialog"
+        aria-label="Escolher icone do SW"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="bf-modal-head">
+          <span className="bf-modal-title">Escolher icone</span>
+          <button type="button" className="bf-modal-close"
+                  onClick={onClose} aria-label="Fechar">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none"
+                 stroke="currentColor" strokeWidth="2.4" strokeLinecap="round">
+              <path d="M5 5 L19 19 M19 5 L5 19" />
+            </svg>
+          </button>
+        </div>
+        <div className="bf-sw-icon-grid">
+          {SW_ICONS.map((_, i) => {
+            const id = i + 1;
+            const isActive = id === currentId;
+            return (
+              <button
+                key={id}
+                type="button"
+                className={'bf-sw-icon-cell' + (isActive ? ' is-active' : '')}
+                onClick={() => { onPick(id); onClose(); }}
+                aria-label={`Icone ${id}`}
+                title={`ICO${id}`}
+              >
+                <SwIconImg iconId={id} color={previewColor || '#fff'} size={44} />
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+// Editor da aba DISPLAY do card de SW. 3 toggles de cor (ICON/BACK/BORDER
+// × OFF/ON), preview clicavel que abre o picker, toggle ICONE/TEXT,
+// toggle PREVIEW ON/OFF (so muda o que o preview mostra), e input da
+// SIGLA (rodape do icone OU texto central).
+function SwDisplayEditor({ sw, disp, onChange }) {
+  const d = { ...DEFAULT_SW_DISPLAY(), ...(disp || {}) };
+  const [previewOn, setPreviewOn] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const set = (patch) => onChange({ ...d, ...patch });
+
+  const colorRow = (label, offKey, onKey) => (
+    <div className="bf-sw-disp-color">
+      <div className="bf-sw-disp-color-label">{label}</div>
+      <div className="bf-sw-disp-color-swatches">
+        <div className="bf-sw-disp-color-cell">
+          <span className="bf-sw-disp-color-state">OFF</span>
+          <ColorBar label={`${label} OFF`} colorId={d[offKey]}
+                    onChange={(id) => set({ [offKey]: id })} />
+        </div>
+        <span className="bf-sw-disp-color-sep">—</span>
+        <div className="bf-sw-disp-color-cell">
+          <span className="bf-sw-disp-color-state">ON</span>
+          <ColorBar label={`${label} ON`} colorId={d[onKey]}
+                    onChange={(id) => set({ [onKey]: id })} />
+        </div>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="bf-sw-disp">
+      <div className="bf-sw-disp-colors">
+        {colorRow('ICON',   'ic_off', 'ic_on')}
+        {colorRow('BACK',   'bg_off', 'bg_on')}
+        {colorRow('BORDER', 'br_off', 'br_on')}
+      </div>
+
+      <div className="bf-sw-disp-preview-row">
+        <button
+          type="button"
+          className="bf-sw-disp-preview"
+          onClick={() => setPickerOpen(true)}
+          aria-label="Trocar icone"
+          title="Trocar icone"
+        >
+          <SwDisplayTile disp={d} on={previewOn} size={96} />
+        </button>
+        <div className="bf-sw-disp-toggles">
+          <button
+            type="button"
+            className={'bf-input bf-input-num' + (previewOn ? ' is-active' : '')}
+            onClick={() => setPreviewOn((v) => !v)}
+            aria-pressed={previewOn}
+            title="Alterna o preview entre estados OFF/ON"
+          >
+            PREVIEW {previewOn ? 'ON' : 'OFF'}
+          </button>
+          <button
+            type="button"
+            className={'bf-input bf-input-num' + (d.mode === 'text' ? ' is-active' : '')}
+            onClick={() => set({ mode: d.mode === 'text' ? 'icon' : 'text' })}
+            aria-pressed={d.mode === 'text'}
+            title="Alterna entre exibir o icone ou so o texto da sigla"
+          >
+            {d.mode === 'text' ? 'TEXT' : 'ICONE'}
+          </button>
+        </div>
+      </div>
+
+      <label className="bf-field bf-sw-disp-sigla">
+        <span className="bf-field-label">NOME DO ICONE / SIGLA</span>
+        <input
+          type="text"
+          className="bf-input"
+          value={d.sigla}
+          maxLength={12}
+          onChange={(e) => set({ sigla: e.target.value })}
+          placeholder="STOMP"
+        />
+      </label>
+
+      <SwIconPicker
+        open={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        currentId={d.icon_id}
+        previewColor={(() => {
+          // Fallback pra branco se a cor escolhida for transparente —
+          // senao os icones do picker ficariam invisiveis.
+          const c = paletteCss(previewOn ? d.ic_on : d.ic_off);
+          return c === 'transparent' ? '#cfcfd6' : c;
+        })()}
+        onPick={(id) => set({ icon_id: id })}
+      />
+    </div>
+  );
+}
+
+function LiveModePanel({ presetCount, swModes, onSetSwMode, swParams, onSetSwParam, ledPreviewLive, swLiveOn, lastSingleSw, swDisplay, onSetSwDisplay }) {
   const [selectedSw, setSelectedSw] = useState(null);  // 1..N ou null
   const [cardTab, setCardTab] = useState('gear');      // 'gear' | 'display'
   const [pickerOpen, setPickerOpen] = useState(false); // popup de selecao de modo
@@ -3962,17 +4283,25 @@ function LiveModePanel({ presetCount, swModes, onSetSwMode, swParams, onSetSwPar
   return (
     <>
       <div className="bf-sw-row">
-        {switches.map((n) => (
-          <button
-            key={n}
-            type="button"
-            className={'bf-sw-btn' + (selectedSw === n ? ' is-active' : '')}
-            onClick={() => selectSw(n)}
-          >
-            <SwModeIcon id={modeOf(n)} />
-            <span className="bf-sw-btn-label">SW{n}</span>
-          </button>
-        ))}
+        {switches.map((n) => {
+          const disp = (swDisplay && swDisplay[n]) || DEFAULT_SW_DISPLAY();
+          const ledOn = Array.isArray(swLiveOn) ? !!swLiveOn[n - 1] : false;
+          return (
+            <button
+              key={n}
+              type="button"
+              className={'bf-sw-btn bf-sw-btn-tile' + (selectedSw === n ? ' is-active' : '')}
+              onClick={() => selectSw(n)}
+            >
+              <SwDisplayTile
+                disp={disp}
+                on={ledOn}
+                size={86}
+                labelBelow={`SW${n}`}
+              />
+            </button>
+          );
+        })}
       </div>
 
       {selectedSw !== null && (
@@ -4151,7 +4480,11 @@ function LiveModePanel({ presetCount, swModes, onSetSwMode, swParams, onSetSwPar
               )
             )}
             {cardTab === 'display' && (
-              <div className="bf-sw-card-empty">SW{selectedSw} · display em breve</div>
+              <SwDisplayEditor
+                sw={selectedSw}
+                disp={(swDisplay && swDisplay[selectedSw]) || DEFAULT_SW_DISPLAY()}
+                onChange={(next) => onSetSwDisplay && onSetSwDisplay(selectedSw, next)}
+              />
             )}
           </div>
         </div>
@@ -4210,6 +4543,7 @@ function PagePresetConfig({
   showMonitor, onToggleShowMonitor,
   swModes, savedSwModes, onSetSwMode,
   swParams, savedSwParams, onSetSwParam, swLiveOn, lastSingleSw,
+  swDisplay, onSetSwDisplay,
   liveEvents, monitorEntry,
   ledPreviewLive,
 }) {
@@ -4303,7 +4637,8 @@ function PagePresetConfig({
       {switchMode === 'live'
         ? <LiveModePanel presetCount={presetCount} swModes={swModes} onSetSwMode={onSetSwMode}
             swParams={swParams} onSetSwParam={onSetSwParam} ledPreviewLive={ledPreviewLive}
-            swLiveOn={swLiveOn} lastSingleSw={lastSingleSw} />
+            swLiveOn={swLiveOn} lastSingleSw={lastSingleSw}
+            swDisplay={swDisplay} onSetSwDisplay={onSetSwDisplay} />
         : <PresetEditorCard tag={tag} onDisplayNameChange={onDisplayNameChange} onRegisterSave={onRegisterPresetSave} savedSwModes={savedSwModes} savedSwParams={savedSwParams} />}
 
       {showMonitor && (
@@ -5974,6 +6309,15 @@ function App() {
   const [savedSwModes, setSavedSwModes] = useState({});
   const [swModesStatus, setSwModesStatus] = useState('idle'); // idle|saving|saved|error
   const swModesDirty = swModesToStr(swModes) !== swModesToStr(savedSwModes);
+  // Display config (icone + cores + sigla) por SW. Vive no header do
+  // preset (campos swdisp1..swdisp6). Mesmo padrao do swModes: dirty
+  // tracking, salvo via saveLive junto com sw_modes.
+  const [swDisplay, setSwDisplay] = useState(defaultSwDisplayMap);
+  const [savedSwDisplay, setSavedSwDisplay] = useState(defaultSwDisplayMap);
+  const swDisplayDirty = !swDisplayEqual(swDisplay, savedSwDisplay);
+  const setSwDisplayOne = useCallback((sw, next) => {
+    setSwDisplay((prev) => ({ ...prev, [sw]: { ...DEFAULT_SW_DISPLAY(), ...next } }));
+  }, []);
   const [swLiveOn, setSwLiveOn] = useState([false, false, false, false, false, false]);
   // Estado da secao B (click longo do STOMP 2) — espelha swActive.liveOn2
   // do firmware. Separado pra o poll detectar press do click longo.
@@ -6037,14 +6381,17 @@ function App() {
   const [savedSwParams, setSavedSwParams] = useState({});
   const swParamsDirty =
     JSON.stringify(swParams) !== JSON.stringify(savedSwParams);
-  // dirty combinado do LIVE MODE (sw_modes do header + params dos SWs).
-  const liveDirty = swModesDirty || swParamsDirty;
+  // dirty combinado do LIVE MODE (sw_modes do header + params dos SWs +
+  // display config dos SWs).
+  const liveDirty = swModesDirty || swParamsDirty || swDisplayDirty;
   // Espelha o dirty pro poll de loadBankCurrent (setInterval com closure
   // velha) decidir se pode sobrescrever o estado ou se respeita a edicao.
   const swModesDirtyRef = useRef(false);
   useEffect(() => { swModesDirtyRef.current = swModesDirty; }, [swModesDirty]);
   const swParamsDirtyRef = useRef(false);
   useEffect(() => { swParamsDirtyRef.current = swParamsDirty; }, [swParamsDirty]);
+  const swDisplayDirtyRef = useRef(false);
+  useEffect(() => { swDisplayDirtyRef.current = swDisplayDirty; }, [swDisplayDirty]);
   // Espelha o saved* pra o poll snapshotar config no momento do press
   // (eventos do MONITOR ficam congelados se o usuario editar depois).
   useEffect(() => { savedSwModesRef.current = savedSwModes; }, [savedSwModes]);
@@ -6113,10 +6460,11 @@ function App() {
       meta: clone(currentSavedMeta),
       swModes: clone(savedSwModes || {}),
       swParams: clone(savedSwParams || {}),
+      swDisplay: clone(savedSwDisplay || {}),
     });
     setPresetClipboardStatus('copied');
     setTimeout(() => setPresetClipboardStatus('idle'), 1500);
-  }, [currentSavedMeta, savedSwModes, savedSwParams]);
+  }, [currentSavedMeta, savedSwModes, savedSwParams, savedSwDisplay]);
 
   // Helper compartilhado entre PASTE PRESET e PASTE BANK. Aplica um
   // snapshot (meta + swModes + swParams) em um preset destino.
@@ -6138,6 +6486,7 @@ function App() {
     onStep && onStep('Header');
     const headerBody = metaToApiBody(src.meta);
     headerBody.set('sw_modes', swModesToStr(src.swModes));
+    if (src.swDisplay) swDisplayToApiBody(src.swDisplay, headerBody);
     await apiCall('POST',
       `/bank/preset?bank=${encodeURIComponent(destTag)}`, headerBody);
 
@@ -6228,10 +6577,11 @@ function App() {
         const rawMeta = (presetResp && presetResp.meta) || presetResp || {};
         const meta = metaFromApi(rawMeta);
         const swModes = parseSwModesStr(rawMeta.sw_modes || '0,0,0,0,0,0');
+        const swDisplay = parseSwDisplayFromMeta(rawMeta);
         const paramsResp = await apiCall('GET',
           `/sw/params?bank=${encodeURIComponent(tag)}`);
         const swParams = parseSwParamsObj(paramsResp && paramsResp.sw_params);
-        presets.push({ tag, meta, swModes, swParams });
+        presets.push({ tag, meta, swModes, swParams, swDisplay });
       }
       setBankClipboard({ srcLetter: letter, presets });
       setBankClipboardStatus('copied');
@@ -6330,9 +6680,13 @@ function App() {
     try {
       const headerBody = new URLSearchParams();
       headerBody.set('sw_modes', swModesToStr(swModes));
+      // Display config (icone + cores + sigla) por SW vai junto, pra
+      // ser uma unica escrita do header.
+      swDisplayToApiBody(swDisplay, headerBody);
       await apiCall('POST',
         `/bank/preset?bank=${encodeURIComponent(tag)}`, headerBody);
       setSavedSwModes(swModes);
+      setSavedSwDisplay(swDisplay);
 
       // Params: posta SW/modo que mudou desde o ultimo SAVE. Tambem
       // garante que o MODO ATIVO de cada SW tenha linha gravada — mesmo
@@ -6683,6 +7037,13 @@ function App() {
         setSwModes(loaded);
         setSavedSwModes(loaded);
       }
+      // sw_display (icone + cores) — mesmo padrao do sw_modes. Respeita
+      // edicao pendente pra o poll nao sobrescrever.
+      if (bank.meta && !swDisplayDirtyRef.current) {
+        const loadedDisp = parseSwDisplayFromMeta(bank.meta);
+        setSwDisplay(loadedDisp);
+        setSavedSwDisplay(loadedDisp);
+      }
       // Params de SW: re-busca quando o preset muda (cobre troca pelo
       // hardware), respeitando edicao pendente. /sw/params e um GET
       // separado — so chamado na troca de preset, nao a cada poll.
@@ -6767,6 +7128,10 @@ function App() {
       const loadedSwModes = parseSwModesStr(bank.meta?.sw_modes);
       setSwModes(loadedSwModes);
       setSavedSwModes(loadedSwModes);
+      // sw_display do novo preset — mesma logica, descarta edicao nao salva.
+      const loadedSwDisplay = parseSwDisplayFromMeta(bank.meta || {});
+      setSwDisplay(loadedSwDisplay);
+      setSavedSwDisplay(loadedSwDisplay);
       // Troca explicita de preset: recarrega tambem os params de SW
       // (descarta edicao nao salva do preset anterior).
       loadSwParams(currentTagRef.current);
@@ -6955,6 +7320,8 @@ function App() {
             onSetSwParam={setSwParam}
             swLiveOn={swLiveOn}
             lastSingleSw={lastSingleSw}
+            swDisplay={swDisplay}
+            onSetSwDisplay={setSwDisplayOne}
             liveEvents={liveEvents}
             monitorEntry={monitorEntry}
             ledPreviewLive={ledPreviewLive}
