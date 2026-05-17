@@ -13,6 +13,13 @@
 /CLAUDE.md
 /data/
 
+# ── Icons build (gerado pelo tools/build_icons.py) ──────────────────────
+# As PNGs fontes em icons/source/ sao versionadas. Os .h gerados em
+# icons/build/ sao artefato local — cada maquina regenera ao rodar o
+# script. Mantem o .gitkeep pra pasta existir.
+/icons/build/*
+!/icons/build/.gitkeep
+
 # ── Build / IDE ────────────────────────────────────────────────────────
 *.o
 *.obj
