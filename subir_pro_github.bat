@@ -5,41 +5,38 @@ cd /d "%~dp0"
 
 echo.
 echo ============================================================
-echo   BFMIDI - Subir mudancas pro GitHub
+echo   BFMIDI - Atualizar (manda mudancas pro device via CI)
 echo ============================================================
 echo.
 
-REM Mostra o que mudou
-echo Arquivos modificados:
-git status --short
+REM Confere que estamos num repositorio git
+git rev-parse --is-inside-work-tree >nul 2>&1
 if errorlevel 1 (
-  echo.
   echo ERRO: Esta pasta nao parece ser um repositorio git.
   echo.
   pause
   exit /b 1
 )
+
+REM Mostra o que mudou
+echo Arquivos modificados:
+git status --short
 echo.
 
 REM Checa se ha algo pra commitar
 for /f %%i in ('git status --porcelain ^| find /c /v ""') do set CHANGES=%%i
 if "%CHANGES%"=="0" (
-  echo Nada mudou desde o ultimo push. Saindo.
+  echo Nada mudou desde o ultimo update. Saindo.
   echo.
   pause
   exit /b 0
 )
 
-REM Pergunta a mensagem
-set "MSG="
-set /p MSG=Mensagem do commit (ENTER para data/hora):
-if "!MSG!"=="" (
-  for /f "tokens=2 delims==" %%a in ('wmic OS Get localdatetime /value') do set "DT=%%a"
-  set "MSG=update !DT:~0,4!-!DT:~4,2!-!DT:~6,2! !DT:~8,2!:!DT:~10,2!"
-)
+REM Mensagem automatica com data/hora (sem perguntar)
+for /f "tokens=2 delims==" %%a in ('wmic OS Get localdatetime /value') do set "DT=%%a"
+set "MSG=update !DT:~0,4!-!DT:~4,2!-!DT:~6,2! !DT:~8,2!:!DT:~10,2!"
 
-echo.
-echo Commit: "!MSG!"
+echo Salvando mudancas com a mensagem: "!MSG!"
 echo.
 
 git add -A
@@ -53,7 +50,7 @@ if errorlevel 1 (
 )
 
 echo.
-echo Sincronizando com o GitHub (caso o CI tenha commitado litttlefs.bin)...
+echo Sincronizando com o GitHub (caso o CI tenha mandado algo)...
 git pull --rebase --autostash
 if errorlevel 1 (
   echo.
@@ -71,7 +68,7 @@ if errorlevel 1 (
   echo ERRO no push. Possiveis causas:
   echo   - Sem internet
   echo   - Credenciais expiradas
-  echo   - Algum outro push aconteceu antes (precisa git pull)
+  echo   - Outro push aconteceu antes (rode esse .bat de novo)
   echo.
   pause
   exit /b 1
@@ -87,7 +84,7 @@ echo.
 echo   Acompanhe em:
 echo   https://github.com/bffx-updates/PROJECT_ZERO/actions
 echo.
-echo   Depois que ficar verde, o cliente atualiza pelo:
+echo   Depois que ficar verde, atualize o device pelo:
 echo   https://bffx-updates.github.io/PROJECT_ZERO/upload_littlefs/
 echo ============================================================
 echo.
