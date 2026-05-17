@@ -1229,39 +1229,127 @@ const SW_MODES = [
 // A cor nao esta no bitmap — e aplicada via CSS mask-image no render.
 const SW_ICONS = Array.from({ length: 51 }, (_, i) => `ico${i + 1}`);
 
-// Defaults por SW. mode 'icon' + ico1 + sigla vazia + cores transparentes
-// (que o PaletteRender resolve pra "sem efeito visual").
+// Defaults por SW. mode 'icon' + ico1 + sigla vazia.
+// Cores padrao (DISPLAY_PALETTE indices):
+//   1 = SOLID Preto, 3 = SOLID Cinza Claro, 4 = SOLID Branco
+//   ICON  ON=Branco / OFF=Cinza
+//   BACK  ON=Preto  / OFF=Preto
+//   BORDA ON=Branco / OFF=Cinza
 function DEFAULT_SW_DISPLAY() {
   return {
     icon_id: 1,           // 1..51 (indice no SW_ICONS)
     mode: 'icon',         // 'icon' | 'text'
     sigla: '',            // rodape do icone (icon mode) ou texto central (text mode)
-    ic_off: 0, ic_on: 4,  // cor do ICONE off/on (DISPLAY_PALETTE)
-    bg_off: 0, bg_on: 0,  // cor do FUNDO (back)
-    br_off: 0, br_on: 0,  // cor da BORDA
+    ic_off: 3, ic_on: 4,  // ICON: Cinza Claro / Branco (estados OFF/ON)
+    bg_off: 1, bg_on: 1,  // BACK: Preto / Preto
+    br_off: 3, br_on: 4,  // BORDER: Cinza Claro / Branco
+    // SPIN: 3 sub-configs INDEPENDENTES (so usadas quando modo=SPIN). Cada
+    // estado tem icone proprio + sigla + cor ON dos 3 elementos (ICON/BACK/
+    // BORDER). Nao tem OFF — SPIN sempre cicla entre os 3 estados ativos.
+    spin: [DEFAULT_SW_SPIN_STATE(), DEFAULT_SW_SPIN_STATE(), DEFAULT_SW_SPIN_STATE()],
+    // STOMP: 4 sub-configs adicionais pras secoes B (click longo) e C
+    // (reclick), cada uma com OFF e ON. Secao A continua usando ic_off/
+    // ic_on/bg_off/bg_on/br_off/br_on do config principal acima.
+    //   [0]=B_off, [1]=B_on, [2]=C_off, [3]=C_on
+    // Cada entrada tem icone + cor ICON + cor BACK + cor BORDER. Sigla
+    // continua sendo a do config principal (compartilhada).
+    stomp: [DEFAULT_SW_STOMP_SUB(), DEFAULT_SW_STOMP_SUB(),
+            DEFAULT_SW_STOMP_SUB(), DEFAULT_SW_STOMP_SUB()],
+    // TAP TEMPO: 3 sub-configs.
+    //   [0]=TAP (estado unico, sem OFF/ON — analogo a um SPIN state)
+    //   [1]=LP_off, [2]=LP_on (analogo a uma secao STOMP)
+    // Sigla continua compartilhada com o config principal.
+    tap: [DEFAULT_SW_STOMP_SUB(), DEFAULT_SW_STOMP_SUB(), DEFAULT_SW_STOMP_SUB()],
   };
 }
 
-const SW_DISPLAY_NUMERIC_KEYS =
-  ['icon_id', 'ic_off', 'ic_on', 'bg_off', 'bg_on', 'br_off', 'br_on'];
+function DEFAULT_SW_SPIN_STATE() {
+  return { icon_id: 1, sigla: '', mode: 'icon', ic_on: 4, bg_on: 1, br_on: 4 };
+}
 
-// Lê os 9 campos do SW <i> de dentro do objeto meta cru da API
-// (formato "swdisp1=icon_id=5|mode=text|sigla=STOMP|...|"). Defaults
-// preenchem campos ausentes. Pode aceitar tambem chaves curtas (s1i, s1m
-// etc.) — usado em backups/legados — mas o serializador novo emite os
-// nomes completos pra ser auto-descritivo.
+function DEFAULT_SW_STOMP_SUB() {
+  return { icon_id: 1, mode: 'icon', ic: 4, bg: 1, br: 4 };
+}
+
+// Mapeamento de chaves COMPACTAS (storage) <-> longas (state JS).
+// O storage usa chaves curtas pra caber no orcamento de DRAM do firmware
+// (BANK_MEMORY_DATA_SIZE = 576). O state interno do React mantem nomes
+// auto-descritivos.
+const SW_DISPLAY_KEY_SHORT = {
+  icon_id: 'i', ic_off: 'a', ic_on: 'A',
+  bg_off: 'b', bg_on: 'B',
+  br_off: 'c', br_on: 'C',
+};
+const SW_DISPLAY_KEY_LONG = Object.fromEntries(
+  Object.entries(SW_DISPLAY_KEY_SHORT).map(([l, s]) => [s, l]));
+
+// Lê os 9 campos do SW de dentro do blob da API (formato compacto
+// "i=5;m=1;s=STOMP;a=0;A=4;b=0;B=0;c=0;C=0"). Separador INTERNO e ';'
+// (nao '|') pra nao conflitar com o separador EXTERNO de campos do
+// header do preset, que e '|'. Aceita tambem nomes longos
+// (icon_id=, mode=, sigla=, ic_off=...) pra backward-compat.
 function parseSwDisplayOne(blob) {
   const out = DEFAULT_SW_DISPLAY();
-  for (const pair of String(blob || '').split('|')) {
+  // Aceita ambos os separadores (compat com payloads antigos que
+  // chegaram a usar '|' antes do bug de conflito ser corrigido).
+  const pairs = String(blob || '').split(/[;|]/);
+  for (const pair of pairs) {
     const eq = pair.indexOf('=');
     if (eq < 0) continue;
     const k = pair.slice(0, eq);
     const v = pair.slice(eq + 1);
-    if (k === 'mode') out.mode = v === 'text' ? 'text' : 'icon';
-    else if (k === 'sigla') out.sigla = v;
-    else if (SW_DISPLAY_NUMERIC_KEYS.includes(k)) {
+    if (k === 'm' || k === 'mode') {
+      out.mode = (v === 'text' || v === '0') ? 'text' : 'icon';
+      continue;
+    }
+    if (k === 's' || k === 'sigla') { out.sigla = v; continue; }
+    // SPIN sub-configs (tags 1..3): chaves i1/s1/A1/B1/C1 → spin[0] etc.
+    // STOMP sub-configs (tags 4..7): chaves i4/A4/B4/C4 → stomp[0] etc.
+    //   [0]=B_off, [1]=B_on, [2]=C_off, [3]=C_on
+    // TAP TEMPO sub-configs (sufixos 't', 'o', 'n'): chaves it/At/Bt/Ct
+    //   → tap[0] (TAP); io/... → tap[1] (LP_off); in/... → tap[2] (LP_on)
+    if (k.length === 2) {
+      const last = k.charCodeAt(k.length - 1);
+      const base = k[0];
+      // Digit tag (1..7) → SPIN/STOMP
+      if (last >= 49 && last <= 55) {
+        const tag = last - 48;
+        if (tag <= 3) {
+          const state = out.spin[tag - 1];
+          if (base === 'i') state.icon_id = parseInt(v, 10) || 1;
+          else if (base === 's') state.sigla = v;
+          else if (base === 'm') state.mode = v === '0' ? 'text' : 'icon';
+          else if (base === 'A') state.ic_on = parseInt(v, 10) || 0;
+          else if (base === 'B') state.bg_on = parseInt(v, 10) || 0;
+          else if (base === 'C') state.br_on = parseInt(v, 10) || 0;
+        } else {
+          const stompIdx = tag - 4;
+          const sub = out.stomp[stompIdx];
+          if (base === 'i') sub.icon_id = parseInt(v, 10) || 1;
+          else if (base === 'm') sub.mode = v === '0' ? 'text' : 'icon';
+          else if (base === 'A') sub.ic = parseInt(v, 10) || 0;
+          else if (base === 'B') sub.bg = parseInt(v, 10) || 0;
+          else if (base === 'C') sub.br = parseInt(v, 10) || 0;
+        }
+        continue;
+      }
+      // Letter tag (t/o/n) → TAP TEMPO
+      const tapIdx = k[1] === 't' ? 0 : k[1] === 'o' ? 1 : k[1] === 'n' ? 2 : -1;
+      if (tapIdx >= 0) {
+        const sub = out.tap[tapIdx];
+        if (base === 'i') sub.icon_id = parseInt(v, 10) || 1;
+        else if (base === 'm') sub.mode = v === '0' ? 'text' : 'icon';
+        else if (base === 'A') sub.ic = parseInt(v, 10) || 0;
+        else if (base === 'B') sub.bg = parseInt(v, 10) || 0;
+        else if (base === 'C') sub.br = parseInt(v, 10) || 0;
+        continue;
+      }
+    }
+    const longKey = SW_DISPLAY_KEY_LONG[k] || k;
+    if (longKey in out && longKey !== 'mode' && longKey !== 'sigla' &&
+        longKey !== 'spin') {
       const n = parseInt(v, 10);
-      if (Number.isFinite(n)) out[k] = n;
+      if (Number.isFinite(n)) out[longKey] = n;
     }
   }
   return out;
@@ -1279,21 +1367,63 @@ function parseSwDisplayFromMeta(rawMeta) {
   return out;
 }
 
-// Serializa um SW pro formato compacto "icon_id=...|mode=...|sigla=...|...".
-// Encode minimo da sigla pra nao quebrar o separador '|' (raro mas
-// possivel se o usuario digitar). Chaves numericas viram String(n).
+// Serializa um SW pro formato COMPACTO "i=5;m=1;s=STOMP;a=0;A=4;b=0;...".
+// Separador INTERNO e ';' (nao '|') pra nao conflitar com o separador
+// EXTERNO de campos do header. Chaves curtas pra caber no orcamento de
+// DRAM do firmware. Sigla truncada em 8 chars; '|' e ';' filtrados da
+// sigla pra nao quebrar nenhum parser (interno ou externo).
 function serializeSwDisplayOne(d) {
-  const safe = { ...DEFAULT_SW_DISPLAY(), ...(d || {}) };
-  const sigla = String(safe.sigla || '').replace(/\|/g, ' ');
+  const merged = { ...DEFAULT_SW_DISPLAY(), ...(d || {}) };
+  const spin = Array.isArray(d && d.spin) ? d.spin : [];
+  const stomp = Array.isArray(d && d.stomp) ? d.stomp : [];
+  const sigla = String(merged.sigla || '').replace(/[|;]/g, ' ').slice(0, 8);
   const parts = [
-    `icon_id=${safe.icon_id|0}`,
-    `mode=${safe.mode === 'text' ? 'text' : 'icon'}`,
-    `sigla=${sigla}`,
-    `ic_off=${safe.ic_off|0}`, `ic_on=${safe.ic_on|0}`,
-    `bg_off=${safe.bg_off|0}`, `bg_on=${safe.bg_on|0}`,
-    `br_off=${safe.br_off|0}`, `br_on=${safe.br_on|0}`,
+    `i=${merged.icon_id|0}`,
+    `m=${merged.mode === 'text' ? 0 : 1}`,
+    `s=${sigla}`,
+    `a=${merged.ic_off|0}`, `A=${merged.ic_on|0}`,
+    `b=${merged.bg_off|0}`, `B=${merged.bg_on|0}`,
+    `c=${merged.br_off|0}`, `C=${merged.br_on|0}`,
   ];
-  return parts.join('|');
+  // SPIN sub-configs (i1/i2/i3 etc.): emite so campos != default.
+  // mode='text' vira m{N}=0; default 'icon' (m{N}=1) e omitido.
+  const defSpin = DEFAULT_SW_SPIN_STATE();
+  for (let i = 0; i < 3; i++) {
+    const s = { ...defSpin, ...(spin[i] || {}) };
+    const tag = String(i + 1);
+    if ((s.icon_id|0) !== defSpin.icon_id) parts.push(`i${tag}=${s.icon_id|0}`);
+    const sg = String(s.sigla || '').replace(/[|;]/g, ' ').slice(0, 6);
+    if (sg) parts.push(`s${tag}=${sg}`);
+    if (s.mode === 'text') parts.push(`m${tag}=0`);
+    if ((s.ic_on|0) !== defSpin.ic_on) parts.push(`A${tag}=${s.ic_on|0}`);
+    if ((s.bg_on|0) !== defSpin.bg_on) parts.push(`B${tag}=${s.bg_on|0}`);
+    if ((s.br_on|0) !== defSpin.br_on) parts.push(`C${tag}=${s.br_on|0}`);
+  }
+  // STOMP sub-configs pras secoes B e C, OFF e ON. Tags: 4..7.
+  const defStomp = DEFAULT_SW_STOMP_SUB();
+  for (let i = 0; i < 4; i++) {
+    const s = { ...defStomp, ...(stomp[i] || {}) };
+    const tag = String(i + 4);  // 4,5,6,7
+    if ((s.icon_id|0) !== defStomp.icon_id) parts.push(`i${tag}=${s.icon_id|0}`);
+    if (s.mode === 'text') parts.push(`m${tag}=0`);
+    if ((s.ic|0) !== defStomp.ic) parts.push(`A${tag}=${s.ic|0}`);
+    if ((s.bg|0) !== defStomp.bg) parts.push(`B${tag}=${s.bg|0}`);
+    if ((s.br|0) !== defStomp.br) parts.push(`C${tag}=${s.br|0}`);
+  }
+  // TAP TEMPO sub-configs (3 estados). Sufixos: 't' = TAP, 'o' = LP_off,
+  // 'n' = LP_on. Mesma estrutura {icon_id, mode, ic, bg, br}.
+  const tap = Array.isArray(d && d.tap) ? d.tap : [];
+  const tapTags = ['t', 'o', 'n'];
+  for (let i = 0; i < 3; i++) {
+    const s = { ...defStomp, ...(tap[i] || {}) };
+    const tag = tapTags[i];
+    if ((s.icon_id|0) !== defStomp.icon_id) parts.push(`i${tag}=${s.icon_id|0}`);
+    if (s.mode === 'text') parts.push(`m${tag}=0`);
+    if ((s.ic|0) !== defStomp.ic) parts.push(`A${tag}=${s.ic|0}`);
+    if ((s.bg|0) !== defStomp.bg) parts.push(`B${tag}=${s.bg|0}`);
+    if ((s.br|0) !== defStomp.br) parts.push(`C${tag}=${s.br|0}`);
+  }
+  return parts.join(';');
 }
 
 // Insere os 6 swdispN no body de POST /bank/preset.
@@ -4012,11 +4142,20 @@ function SwSingleEditor({ sw, params, onChange, ledPreviewLive, isActiveSingle }
   );
 }
 
-// Resolve um colorId da DISPLAY_PALETTE pra um CSS color string. Cores
-// transparentes viram 'transparent'. Gradients: pega o hex inicial (no
-// modal de SW estamos pintando icone, nao precisa de fidelidade de
-// gradiente — so a primeira parada).
+// Resolve um colorId da DISPLAY_PALETTE pra um CSS background string.
+// SOLIDS viram hex; gradientes viram linear-gradient via paletteBackground
+// (reusa a logica do ColorBar pra fidelidade visual com o resto do app).
+// Transparentes viram 'transparent'.
 function paletteCss(colorId) {
+  const id = clamp(colorId, 0, DISPLAY_PALETTE.length - 1);
+  const c = DISPLAY_PALETTE[id];
+  if (!c || c.type === DISP_TYPE.TRANSPARENT) return 'transparent';
+  return paletteBackground(c);
+}
+// Versao "solida" pra contextos onde o gradiente nao funciona (ex.: cor
+// de texto, sombras, cor do icone tingido via CSS mask — esses precisam
+// de uma cor unica). Pega o primeiro stop do gradiente.
+function paletteCssSolid(colorId) {
   const id = clamp(colorId, 0, DISPLAY_PALETTE.length - 1);
   const c = DISPLAY_PALETTE[id];
   if (!c || c.type === DISP_TYPE.TRANSPARENT) return 'transparent';
@@ -4047,17 +4186,44 @@ function SwIconImg({ iconId, color, size }) {
 
 // Tile de SW com moldura (background) + borda + icone OU texto centralizado.
 // Reusado em LIVE MODE (botoes SW1..SW6) e no preview do editor display.
-// `on` decide entre cores OFF e ON. labelBelow controla se mostra o
-// "SW1" embaixo (no painel LIVE) — falso no preview do editor.
-function SwDisplayTile({ disp, on, size, labelBelow, isActive }) {
-  const d = { ...DEFAULT_SW_DISPLAY(), ...(disp || {}) };
-  const icColor  = paletteCss(on ? d.ic_on  : d.ic_off);
+// `on` decide entre cores OFF e ON. footerInfo (opcional) e exibido no
+// rodape DENTRO da moldura: { swNum, modeLabel, ledColorHex }. No editor
+// e omitido — quem usa e o painel LIVE pra mostrar "SW1 - STOMP - O".
+function SwDisplayTile({ disp, on, spinState, size, footerInfo, isActive }) {
+  let d = { ...DEFAULT_SW_DISPLAY(), ...(disp || {}) };
+  // Modo SPIN: spinState 0/1/2 seleciona qual sub-config (spin[i]) usar.
+  // Cada estado tem icone + sigla + cores ON proprios. State -1 (awaiting)
+  // cai no estado 1 como fallback (primeiro press confirma o valor 1).
+  if (typeof spinState === 'number') {
+    const spin = Array.isArray(d.spin) ? d.spin : [];
+    const idx = spinState >= 0 && spinState <= 2 ? spinState : 0;
+    const s = { ...DEFAULT_SW_SPIN_STATE(), ...(spin[idx] || {}) };
+    d = {
+      ...d,
+      icon_id: s.icon_id,
+      sigla: s.sigla || d.sigla,
+      mode: 'icon',
+      ic_on: s.ic_on, ic_off: s.ic_on,
+      bg_on: s.bg_on, bg_off: s.bg_on,
+      br_on: s.br_on, br_off: s.br_on,
+    };
+    on = true;  // SPIN sempre "on" — o estado escolhe a cor, nao off/on.
+  }
+  // BACK e BORDER aceitam gradiente (paletteCss devolve linear-gradient
+  // quando aplicavel). ICON e tinta solida — CSS mask-image so pinta com
+  // background-color, gradiente nao funciona; cai pra cor unica.
+  const icColor  = paletteCssSolid(on ? d.ic_on : d.ic_off);
   const bgColor  = paletteCss(on ? d.bg_on  : d.bg_off);
   const brColor  = paletteCss(on ? d.br_on  : d.br_off);
+  // Pra borda, o `border-color` tambem nao aceita gradiente — usa solid
+  // como fallback. Se for gradient, a borda pega so a primeira cor.
+  const brColorSolid = paletteCssSolid(on ? d.br_on : d.br_off);
   const isText   = d.mode === 'text';
   const sigla    = String(d.sigla || '').trim();
   // Moldura quadrada-ish; iconSize ~70% da moldura.
-  const iconW = Math.round(size * 0.55);
+  // Icone ocupa ~82% da largura da moldura — proximo das bordas mas com
+  // folga pequena pra nao colar. Sigla embaixo (quando tem) toma o resto.
+  const iconW = Math.round(size * 0.82);
   return (
     <div
       className={'bf-sw-tile' + (isActive ? ' is-active-frame' : '')}
@@ -4065,14 +4231,19 @@ function SwDisplayTile({ disp, on, size, labelBelow, isActive }) {
         width: size + 'px',
         height: size + 'px',
         background: bgColor === 'transparent' ? undefined : bgColor,
-        borderColor: brColor === 'transparent' ? undefined : brColor,
-        borderWidth: brColor === 'transparent' ? undefined : '2px',
-        borderStyle: brColor === 'transparent' ? undefined : 'solid',
+        borderColor: brColorSolid === 'transparent' ? undefined : brColorSolid,
+        borderWidth: brColorSolid === 'transparent' ? undefined : '2px',
+        borderStyle: brColorSolid === 'transparent' ? undefined : 'solid',
       }}
     >
       {isText ? (
-        <span className="bf-sw-tile-text" style={{ color: icColor }}>
-          {sigla || '—'}
+        // TEXT mode: 3 chars grandes centralizados, na cor do ICON (icColor).
+        // Fonte ~38% do tile pra preencher visualmente sem encostar na borda.
+        <span
+          className="bf-sw-tile-text"
+          style={{ color: icColor, fontSize: Math.round(size * 0.38) + 'px' }}
+        >
+          {(sigla || '—').slice(0, 3)}
         </span>
       ) : (
         <>
@@ -4084,16 +4255,30 @@ function SwDisplayTile({ disp, on, size, labelBelow, isActive }) {
           )}
         </>
       )}
-      {labelBelow && (
-        <span className="bf-sw-tile-label">{labelBelow}</span>
+      {footerInfo && (
+        <span className="bf-sw-tile-footer" style={{ color: icColor }}>
+          <span className="bf-sw-tile-footer-text">
+            SW{footerInfo.swNum} · {footerInfo.modeLabel}
+          </span>
+          <span
+            className="bf-sw-tile-footer-dot"
+            style={{ background: footerInfo.ledColorHex }}
+            aria-label={`LED color ${footerInfo.ledColorHex}`}
+          />
+        </span>
       )}
     </div>
   );
 }
 
-// Modal picker dos 51 icones. Grid 6 colunas, tinta usando a cor on
-// (visualizacao mais "limpa") — o usuario ve a forma + cor escolhida.
-function SwIconPicker({ open, onClose, currentId, previewColor, onPick }) {
+// Modal picker dos 51 icones + uma celula "TEXT" coringa como primeiro
+// item (id=0). Selecionar TEXT manda o mode pra 'text' no editor (mostra
+// so a sigla centralizada, sem icone). Selecionar um dos 51 manda pra
+// 'icon'. Grid 6 colunas, tinta usando a cor on/selecionada.
+//   allowText (default true): se false, omite a celula TEXT — usado em
+//   contextos onde TEXT nao faz sentido (ex.: sub-estados do SPIN/STOMP
+//   que sao puramente visuais).
+function SwIconPicker({ open, onClose, currentId, currentMode, previewColor, onPick, allowText = false }) {
   if (!open) return null;
   return ReactDOM.createPortal(
     <div className="bf-modal-backdrop" onClick={onClose}>
@@ -4114,9 +4299,22 @@ function SwIconPicker({ open, onClose, currentId, previewColor, onPick }) {
           </button>
         </div>
         <div className="bf-sw-icon-grid">
+          {allowText && (
+            <button
+              key="text"
+              type="button"
+              className={'bf-sw-icon-cell bf-sw-icon-cell-text' +
+                         (currentMode === 'text' ? ' is-active' : '')}
+              onClick={() => { onPick(0); onClose(); }}
+              aria-label="Modo texto (sem icone)"
+              title="TEXT — mostra so a sigla centralizada"
+            >
+              <span style={{ color: previewColor || '#fff' }}>TEXT</span>
+            </button>
+          )}
           {SW_ICONS.map((_, i) => {
             const id = i + 1;
-            const isActive = id === currentId;
+            const isActive = currentMode !== 'text' && id === currentId;
             return (
               <button
                 key={id}
@@ -4137,31 +4335,522 @@ function SwIconPicker({ open, onClose, currentId, previewColor, onPick }) {
   );
 }
 
-// Editor da aba DISPLAY do card de SW. 3 toggles de cor (ICON/BACK/BORDER
-// × OFF/ON), preview clicavel que abre o picker, toggle ICONE/TEXT,
-// toggle PREVIEW ON/OFF (so muda o que o preview mostra), e input da
-// SIGLA (rodape do icone OU texto central).
-function SwDisplayEditor({ sw, disp, onChange }) {
+// Editor de display SPIN — 3 abas (SPIN1/SPIN2/SPIN3), cada uma com seu
+// proprio icone + cor ON dos 3 elementos (ICON/BACK/BORDER) + sigla.
+// SPIN nao tem OFF — o estado SEM press cai no estado 1 por convencao.
+function SwDisplaySpinEditor({ sw, disp, onChange }) {
+  const [activeIdx, setActiveIdx] = useState(0);  // 0/1/2
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const spin = Array.isArray(disp.spin) ? disp.spin : [];
+  const s = { ...DEFAULT_SW_SPIN_STATE(), ...(spin[activeIdx] || {}) };
+
+  // Atualiza apenas o estado ativo, preservando os outros 2.
+  const setState = (patch) => {
+    const next = [
+      { ...DEFAULT_SW_SPIN_STATE(), ...(spin[0] || {}) },
+      { ...DEFAULT_SW_SPIN_STATE(), ...(spin[1] || {}) },
+      { ...DEFAULT_SW_SPIN_STATE(), ...(spin[2] || {}) },
+    ];
+    next[activeIdx] = { ...next[activeIdx], ...patch };
+    onChange({ ...disp, spin: next });
+  };
+
+  // Tile usado como preview do estado ativo: monta um disp efetivo onde
+  // icon_id/sigla/mode vem do spin state e as cores ON sao as do spin state.
+  // Cores OFF sao irrelevantes (preview sempre ON pra SPIN).
+  const previewDisp = {
+    ...disp,
+    icon_id: s.icon_id,
+    sigla: s.sigla,
+    mode: s.mode || 'icon',
+    ic_on: s.ic_on, ic_off: s.ic_on,
+    bg_on: s.bg_on, bg_off: s.bg_on,
+    br_on: s.br_on, br_off: s.br_on,
+  };
+
+  const colorCell = (label, key) => (
+    <div className="bf-sw-disp-color-cell">
+      <span className="bf-sw-disp-color-state">{label}</span>
+      <ColorBar label={label} colorId={s[key]}
+                onChange={(id) => setState({ [key]: id })} />
+    </div>
+  );
+
+  return (
+    <div className="bf-sw-disp">
+      {/* 3 abas SPIN1/SPIN2/SPIN3 — cada uma edita o seu estado */}
+      <div className="bf-seg bf-sw-disp-spin-tabs" role="tablist"
+           aria-label="Estado do SPIN">
+        {[0, 1, 2].map((i) => (
+          <button
+            key={i}
+            type="button"
+            role="tab"
+            aria-selected={activeIdx === i}
+            className={activeIdx === i ? 'is-active' : ''}
+            onClick={() => setActiveIdx(i)}
+          >SPIN {i + 1}</button>
+        ))}
+      </div>
+
+      {/* 3 linhas de cor, com label ICON/BACK/BORDER e 1 swatch ON cada
+          (SPIN nao tem OFF). Mesma estrutura visual do editor basico. */}
+      <div className="bf-sw-disp-colors">
+        <div className="bf-sw-disp-color">
+          <div className="bf-sw-disp-color-label">ICON</div>
+          <div className="bf-sw-disp-color-swatches">{colorCell('ON', 'ic_on')}</div>
+        </div>
+        <div className="bf-sw-disp-color">
+          <div className="bf-sw-disp-color-label">BACK</div>
+          <div className="bf-sw-disp-color-swatches">{colorCell('ON', 'bg_on')}</div>
+        </div>
+        <div className="bf-sw-disp-color">
+          <div className="bf-sw-disp-color-label">BORDER</div>
+          <div className="bf-sw-disp-color-swatches">{colorCell('ON', 'br_on')}</div>
+        </div>
+      </div>
+
+      <div className="bf-sw-disp-preview-row">
+        <button
+          type="button"
+          className="bf-sw-disp-preview"
+          onClick={() => setPickerOpen(true)}
+          aria-label="Trocar icone deste estado SPIN"
+          title="Trocar icone"
+        >
+          <SwDisplayTile disp={previewDisp} on={true} size={96} />
+        </button>
+        <div className="bf-sw-disp-toggles">
+          <label className="bf-field bf-sw-disp-sigla">
+            <span className="bf-field-label">NOME DO ICONE / SIGLA</span>
+            <input
+              type="text"
+              className="bf-input"
+              value={s.sigla}
+              maxLength={6}
+              onChange={(e) => setState({ sigla: e.target.value.slice(0, 6) })}
+              placeholder={`S${activeIdx + 1}`}
+            />
+          </label>
+        </div>
+      </div>
+
+      <SwIconPicker
+        open={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        currentId={s.icon_id}
+        currentMode={s.mode}
+        allowText={true}
+        previewColor={(() => {
+          const c = paletteCss(s.ic_on);
+          return c === 'transparent' ? '#cfcfd6' : c;
+        })()}
+        onPick={(id) => {
+          if (id === 0) setState({ mode: 'text' });
+          else setState({ icon_id: id, mode: 'icon' });
+        }}
+      />
+    </div>
+  );
+}
+
+// Editor de display STOMP — tabs por (secao × estado). Secao A (curto)
+// usa o config principal (ic_off/ic_on/bg_off/.../br_on). Secao B (longo)
+// e secao C (reclick) usam stomp[0..3] = B_off, B_on, C_off, C_on.
+// Tabs sao filtradas pra mostrar so as secoes habilitadas (ch2>0 → B,
+// ch3>0 → C, lidas dos params fx1 do SW).
+function SwDisplayStompEditor({ sw, disp, onChange, swParams }) {
+  const fxParams = (swParams && swParams[sw] && swParams[sw].fx1)
+                   || DEFAULT_SW_PARAMS('fx1');
+  const hasB = Number(fxParams.ch2) >= 1 && Number(fxParams.ch2) <= 16;
+  const hasC = Number(fxParams.ch3) >= 1 && Number(fxParams.ch3) <= 16;
+
+  // Tabs de SECAO no topo (CLICK CURTO/LONGO/RECLICK). Dentro de cada
+  // secao, o layout ESPELHA o editor basico: 3 linhas de cor com OFF/ON
+  // lado a lado, botao PREVIEW OFF/ON, preview + sigla.
+  const [secaoIdx, setSecaoIdx] = useState(0);
+  const [previewOn, setPreviewOn] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
+
+  useEffect(() => {
+    if (secaoIdx === 1 && !hasB) setSecaoIdx(0);
+    if (secaoIdx === 2 && !hasC) setSecaoIdx(0);
+  }, [hasB, hasC, secaoIdx]);
+
+  const stomp = Array.isArray(disp.stomp) && disp.stomp.length === 4
+                ? disp.stomp
+                : [DEFAULT_SW_STOMP_SUB(), DEFAULT_SW_STOMP_SUB(),
+                   DEFAULT_SW_STOMP_SUB(), DEFAULT_SW_STOMP_SUB()];
+  const isMain = secaoIdx === 0;
+  // sub indices: B-off=0, B-on=1, C-off=2, C-on=3.
+  const subBase = secaoIdx === 1 ? 0 : secaoIdx === 2 ? 2 : -1;
+  const subOff = isMain ? null : stomp[subBase];
+  const subOn  = isMain ? null : stomp[subBase + 1];
+
+  // Le um campo do estado atual (off ou on) da secao ativa.
+  const getField = (field, on) => {
+    if (isMain) {
+      if (field === 'icon_id') return disp.icon_id;
+      if (field === 'mode') return disp.mode || 'icon';
+      if (field === 'ic') return on ? disp.ic_on : disp.ic_off;
+      if (field === 'bg') return on ? disp.bg_on : disp.bg_off;
+      if (field === 'br') return on ? disp.br_on : disp.br_off;
+    }
+    const sub = on ? subOn : subOff;
+    if (!sub) return null;
+    if (field === 'icon_id') return sub.icon_id;
+    if (field === 'mode') return sub.mode || 'icon';
+    return sub[field];
+  };
+
+  // Atualiza campos do estado especificado (on=true/false) na secao ativa.
+  // Aceita patch obj pra fazer multiplas mudancas atomicas (icon_id + mode
+  // no mesmo click do picker, sem stale closure).
+  const setStateFields = (on, patch) => {
+    if (isMain) {
+      const mapped = {};
+      for (const [field, value] of Object.entries(patch)) {
+        const key = field === 'icon_id' ? 'icon_id'
+                  : field === 'mode' ? 'mode'
+                  : field === 'ic' ? (on ? 'ic_on' : 'ic_off')
+                  : field === 'bg' ? (on ? 'bg_on' : 'bg_off')
+                  : field === 'br' ? (on ? 'br_on' : 'br_off')
+                  : null;
+        if (key) mapped[key] = value;
+      }
+      onChange({ ...disp, ...mapped });
+    } else {
+      const idx = subBase + (on ? 1 : 0);
+      const next = stomp.map((s, i) => i === idx
+        ? { ...DEFAULT_SW_STOMP_SUB(), ...s, ...patch }
+        : s);
+      onChange({ ...disp, stomp: next });
+    }
+  };
+
+  // Preview reflete previewOn (igual basico).
+  const curIcon = getField('icon_id', previewOn);
+  const curMode = getField('mode', previewOn);
+  const curIc   = getField('ic', previewOn);
+  const curBg   = getField('bg', previewOn);
+  const curBr   = getField('br', previewOn);
+
+  const previewDisp = {
+    ...disp,
+    icon_id: curIcon,
+    mode: curMode,
+    ic_on: curIc, ic_off: curIc,
+    bg_on: curBg, bg_off: curBg,
+    br_on: curBr, br_off: curBr,
+  };
+
+  // Mesma helper do editor basico: 1 linha = label + (OFF cell — ON cell).
+  // OFF e ON editam o mesmo campo (ic/bg/br) so que em estados diferentes.
+  const colorCell = (stateLabel, on, field) => (
+    <div className="bf-sw-disp-color-cell">
+      <span className="bf-sw-disp-color-state">{stateLabel}</span>
+      <ColorBar label={`${field} ${stateLabel}`} colorId={getField(field, on)}
+                onChange={(id) => setStateFields(on, { [field]: id })} />
+    </div>
+  );
+  const colorRow = (label, field) => (
+    <div className="bf-sw-disp-color">
+      <div className="bf-sw-disp-color-label">{label}</div>
+      <div className="bf-sw-disp-color-swatches">
+        {colorCell('OFF', false, field)}
+        <span className="bf-sw-disp-color-sep">—</span>
+        {colorCell('ON',  true,  field)}
+      </div>
+    </div>
+  );
+
+  const secoes = [
+    { idx: 0, label: 'CLICK CURTO', enabled: true },
+    { idx: 1, label: 'CLICK LONGO', enabled: hasB },
+    { idx: 2, label: 'RECLICK',     enabled: hasC },
+  ];
+
+  return (
+    <div className="bf-sw-disp">
+      {/* Tabs de SECAO (3 colunas, mesmo visual do editor de params) */}
+      <div className="bf-seg bf-sw-fx2-tabs" role="tablist"
+           aria-label="Secao do STOMP">
+        {secoes.map((s) => (
+          <button
+            key={s.idx}
+            type="button"
+            role="tab"
+            aria-selected={secaoIdx === s.idx}
+            disabled={!s.enabled}
+            className={secaoIdx === s.idx ? 'is-active' : ''}
+            onClick={() => s.enabled && setSecaoIdx(s.idx)}
+            title={s.enabled ? s.label
+                  : `Configure ch${s.idx === 1 ? '2' : '3'} no STOMP pra habilitar`}
+          >{s.label}</button>
+        ))}
+      </div>
+
+      {/* Body = mesmo layout do editor basico (3 linhas OFF/ON + preview + sigla) */}
+      <div className="bf-sw-disp-colors">
+        {colorRow('ICON',   'ic')}
+        {colorRow('BACK',   'bg')}
+        {colorRow('BORDER', 'br')}
+      </div>
+
+      <div className="bf-sw-disp-preview-row">
+        <button
+          type="button"
+          className="bf-sw-disp-preview"
+          onClick={() => setPickerOpen(true)}
+          aria-label="Trocar icone"
+          title="Trocar icone"
+        >
+          <SwDisplayTile disp={previewDisp} on={true} size={96} />
+        </button>
+        <div className="bf-sw-disp-toggles">
+          <button
+            type="button"
+            className={'bf-input bf-input-num' + (previewOn ? ' is-active' : '')}
+            onClick={() => setPreviewOn((v) => !v)}
+            aria-pressed={previewOn}
+            title="Alterna o preview entre estados OFF/ON desta secao"
+          >
+            PREVIEW {previewOn ? 'ON' : 'OFF'}
+          </button>
+          <label className="bf-field bf-sw-disp-sigla">
+            <span className="bf-field-label">NOME DO ICONE / SIGLA</span>
+            <input
+              type="text"
+              className="bf-input"
+              value={disp.sigla || ''}
+              maxLength={8}
+              onChange={(e) => onChange({ ...disp, sigla: e.target.value.slice(0, 8) })}
+              placeholder="STOMP"
+            />
+          </label>
+        </div>
+      </div>
+
+      <SwIconPicker
+        open={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        currentId={curIcon}
+        currentMode={curMode}
+        allowText={true}
+        previewColor={(() => {
+          const c = paletteCss(curIc);
+          return c === 'transparent' ? '#cfcfd6' : c;
+        })()}
+        onPick={(id) => {
+          // O icone/mode aplicam pro estado atualmente em preview (OFF ou ON).
+          if (id === 0) setStateFields(previewOn, { mode: 'text' });
+          else setStateFields(previewOn, { icon_id: id, mode: 'icon' });
+        }}
+      />
+    </div>
+  );
+}
+
+// Editor de display TAP TEMPO. 2 abas: TAP (estado unico, igual SPIN) e
+// LONG PRESS (OFF/ON, igual STOMP secao).
+function SwDisplayTapEditor({ sw, disp, onChange }) {
+  // tabIdx: 0=TAP, 1=LONG PRESS
+  const [tabIdx, setTabIdx] = useState(0);
+  const [previewOn, setPreviewOn] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const tap = Array.isArray(disp.tap) && disp.tap.length === 3
+              ? disp.tap
+              : [DEFAULT_SW_STOMP_SUB(), DEFAULT_SW_STOMP_SUB(), DEFAULT_SW_STOMP_SUB()];
+
+  // TAP usa tap[0] (estado unico). LP usa tap[1]=off / tap[2]=on.
+  const isLp = tabIdx === 1;
+  const lpSubIdx = isLp ? (previewOn ? 2 : 1) : 0;
+  const activeSub = tap[lpSubIdx] || DEFAULT_SW_STOMP_SUB();
+
+  const setSubFields = (subIdx, patch) => {
+    const next = tap.map((s, i) => i === subIdx
+      ? { ...DEFAULT_SW_STOMP_SUB(), ...s, ...patch }
+      : s);
+    onChange({ ...disp, tap: next });
+  };
+
+  const previewDisp = {
+    ...disp,
+    icon_id: activeSub.icon_id,
+    mode: activeSub.mode || 'icon',
+    ic_on: activeSub.ic, ic_off: activeSub.ic,
+    bg_on: activeSub.bg, bg_off: activeSub.bg,
+    br_on: activeSub.br, br_off: activeSub.br,
+  };
+
+  // colorCell: pra TAP (1 swatch) ou LP (2 swatches OFF/ON).
+  const colorCellLp = (label, on, field) => {
+    const sub = tap[on ? 2 : 1] || DEFAULT_SW_STOMP_SUB();
+    return (
+      <div className="bf-sw-disp-color-cell">
+        <span className="bf-sw-disp-color-state">{label}</span>
+        <ColorBar label={`${field} ${label}`} colorId={sub[field]}
+                  onChange={(id) => setSubFields(on ? 2 : 1, { [field]: id })} />
+      </div>
+    );
+  };
+  const colorCellTap = (field) => (
+    <div className="bf-sw-disp-color-cell">
+      <span className="bf-sw-disp-color-state">TAP</span>
+      <ColorBar label={field} colorId={(tap[0] || DEFAULT_SW_STOMP_SUB())[field]}
+                onChange={(id) => setSubFields(0, { [field]: id })} />
+    </div>
+  );
+
+  const colorRow = (label, field) => (
+    <div className="bf-sw-disp-color">
+      <div className="bf-sw-disp-color-label">{label}</div>
+      <div className="bf-sw-disp-color-swatches">
+        {isLp ? (
+          <>
+            {colorCellLp('OFF', false, field)}
+            <span className="bf-sw-disp-color-sep">—</span>
+            {colorCellLp('ON',  true,  field)}
+          </>
+        ) : (
+          colorCellTap(field)
+        )}
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="bf-sw-disp">
+      {/* Tabs TAP / LONG PRESS */}
+      <div className="bf-seg bf-sw-fx2-tabs" role="tablist"
+           aria-label="Secao do TAP TEMPO">
+        <button
+          type="button" role="tab"
+          aria-selected={tabIdx === 0}
+          className={tabIdx === 0 ? 'is-active' : ''}
+          onClick={() => setTabIdx(0)}
+        >TAP</button>
+        <button
+          type="button" role="tab"
+          aria-selected={tabIdx === 1}
+          className={tabIdx === 1 ? 'is-active' : ''}
+          onClick={() => setTabIdx(1)}
+        >LONG PRESS</button>
+      </div>
+
+      <div className="bf-sw-disp-colors">
+        {colorRow('ICON',   'ic')}
+        {colorRow('BACK',   'bg')}
+        {colorRow('BORDER', 'br')}
+      </div>
+
+      <div className="bf-sw-disp-preview-row">
+        <button
+          type="button"
+          className="bf-sw-disp-preview"
+          onClick={() => setPickerOpen(true)}
+          aria-label="Trocar icone"
+          title="Trocar icone"
+        >
+          <SwDisplayTile disp={previewDisp} on={true} size={96} />
+        </button>
+        <div className="bf-sw-disp-toggles">
+          {isLp && (
+            <button
+              type="button"
+              className={'bf-input bf-input-num' + (previewOn ? ' is-active' : '')}
+              onClick={() => setPreviewOn((v) => !v)}
+              aria-pressed={previewOn}
+              title="Alterna o preview entre OFF/ON do LONG PRESS"
+            >
+              PREVIEW {previewOn ? 'ON' : 'OFF'}
+            </button>
+          )}
+          <label className="bf-field bf-sw-disp-sigla">
+            <span className="bf-field-label">NOME DO ICONE / SIGLA</span>
+            <input
+              type="text"
+              className="bf-input"
+              value={disp.sigla || ''}
+              maxLength={8}
+              onChange={(e) => onChange({ ...disp, sigla: e.target.value.slice(0, 8) })}
+              placeholder="TAP"
+            />
+          </label>
+        </div>
+      </div>
+
+      <SwIconPicker
+        open={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        currentId={activeSub.icon_id}
+        currentMode={activeSub.mode}
+        allowText={true}
+        previewColor={(() => {
+          const c = paletteCss(activeSub.ic);
+          return c === 'transparent' ? '#cfcfd6' : c;
+        })()}
+        onPick={(id) => {
+          if (id === 0) setSubFields(lpSubIdx, { mode: 'text' });
+          else setSubFields(lpSubIdx, { icon_id: id, mode: 'icon' });
+        }}
+      />
+    </div>
+  );
+}
+
+// Editor da aba DISPLAY do card de SW.
+// - Modo NAO-especial: 3 linhas de cor (ICON/BACK/BORDER × OFF/ON), preview
+//   clicavel pro picker, PREVIEW ON/OFF, sigla.
+// - Modo SPIN: delega pra SwDisplaySpinEditor (3 abas SPIN1/2/3).
+// - Modo STOMP (fx1): delega pra SwDisplayStompEditor (tabs CLICK CURTO/
+//   LONGO/RECLICK conforme secoes habilitadas + body igual basico).
+// - Modo TAP TEMPO: delega pra SwDisplayTapEditor (tabs TAP/LONG PRESS).
+function SwDisplayEditor({ sw, disp, onChange, swMode, swParams }) {
   const d = { ...DEFAULT_SW_DISPLAY(), ...(disp || {}) };
+  if (!Array.isArray(d.spin) || d.spin.length !== 3) {
+    d.spin = [DEFAULT_SW_SPIN_STATE(), DEFAULT_SW_SPIN_STATE(), DEFAULT_SW_SPIN_STATE()];
+  }
+  if (!Array.isArray(d.stomp) || d.stomp.length !== 4) {
+    d.stomp = [DEFAULT_SW_STOMP_SUB(), DEFAULT_SW_STOMP_SUB(),
+               DEFAULT_SW_STOMP_SUB(), DEFAULT_SW_STOMP_SUB()];
+  }
+  if (!Array.isArray(d.tap) || d.tap.length !== 3) {
+    d.tap = [DEFAULT_SW_STOMP_SUB(), DEFAULT_SW_STOMP_SUB(), DEFAULT_SW_STOMP_SUB()];
+  }
+  const isSpin = swMode === 'spin';
+  const isStomp = swMode === 'fx1';
+  const isTap = swMode === 'tap_tempo';
+
+  if (isSpin) {
+    return <SwDisplaySpinEditor sw={sw} disp={d} onChange={onChange} />;
+  }
+  if (isStomp) {
+    return <SwDisplayStompEditor sw={sw} disp={d} onChange={onChange} swParams={swParams} />;
+  }
+  if (isTap) {
+    return <SwDisplayTapEditor sw={sw} disp={d} onChange={onChange} />;
+  }
+
   const [previewOn, setPreviewOn] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const set = (patch) => onChange({ ...d, ...patch });
+
+  const colorCell = (stateLabel, key) => (
+    <div className="bf-sw-disp-color-cell">
+      <span className="bf-sw-disp-color-state">{stateLabel}</span>
+      <ColorBar label={`${key}`} colorId={d[key]}
+                onChange={(id) => set({ [key]: id })} />
+    </div>
+  );
 
   const colorRow = (label, offKey, onKey) => (
     <div className="bf-sw-disp-color">
       <div className="bf-sw-disp-color-label">{label}</div>
       <div className="bf-sw-disp-color-swatches">
-        <div className="bf-sw-disp-color-cell">
-          <span className="bf-sw-disp-color-state">OFF</span>
-          <ColorBar label={`${label} OFF`} colorId={d[offKey]}
-                    onChange={(id) => set({ [offKey]: id })} />
-        </div>
+        {colorCell('OFF', offKey)}
         <span className="bf-sw-disp-color-sep">—</span>
-        <div className="bf-sw-disp-color-cell">
-          <span className="bf-sw-disp-color-state">ON</span>
-          <ColorBar label={`${label} ON`} colorId={d[onKey]}
-                    onChange={(id) => set({ [onKey]: id })} />
-        </div>
+        {colorCell('ON', onKey)}
       </div>
     </div>
   );
@@ -4194,47 +4883,42 @@ function SwDisplayEditor({ sw, disp, onChange }) {
           >
             PREVIEW {previewOn ? 'ON' : 'OFF'}
           </button>
-          <button
-            type="button"
-            className={'bf-input bf-input-num' + (d.mode === 'text' ? ' is-active' : '')}
-            onClick={() => set({ mode: d.mode === 'text' ? 'icon' : 'text' })}
-            aria-pressed={d.mode === 'text'}
-            title="Alterna entre exibir o icone ou so o texto da sigla"
-          >
-            {d.mode === 'text' ? 'TEXT' : 'ICONE'}
-          </button>
+          <label className="bf-field bf-sw-disp-sigla">
+            <span className="bf-field-label">NOME DO ICONE / SIGLA</span>
+            <input
+              type="text"
+              className="bf-input"
+              value={d.sigla}
+              maxLength={8}
+              onChange={(e) => set({ sigla: e.target.value.slice(0, 8) })}
+              placeholder="STOMP"
+            />
+          </label>
         </div>
       </div>
-
-      <label className="bf-field bf-sw-disp-sigla">
-        <span className="bf-field-label">NOME DO ICONE / SIGLA</span>
-        <input
-          type="text"
-          className="bf-input"
-          value={d.sigla}
-          maxLength={12}
-          onChange={(e) => set({ sigla: e.target.value })}
-          placeholder="STOMP"
-        />
-      </label>
 
       <SwIconPicker
         open={pickerOpen}
         onClose={() => setPickerOpen(false)}
         currentId={d.icon_id}
+        currentMode={d.mode}
+        allowText={true}
         previewColor={(() => {
           // Fallback pra branco se a cor escolhida for transparente —
           // senao os icones do picker ficariam invisiveis.
           const c = paletteCss(previewOn ? d.ic_on : d.ic_off);
           return c === 'transparent' ? '#cfcfd6' : c;
         })()}
-        onPick={(id) => set({ icon_id: id })}
+        onPick={(id) => {
+          if (id === 0) set({ mode: 'text' });
+          else set({ icon_id: id, mode: 'icon' });
+        }}
       />
     </div>
   );
 }
 
-function LiveModePanel({ presetCount, swModes, onSetSwMode, swParams, onSetSwParam, ledPreviewLive, swLiveOn, lastSingleSw, swDisplay, onSetSwDisplay }) {
+function LiveModePanel({ presetCount, swModes, onSetSwMode, swParams, onSetSwParam, ledPreviewLive, swLiveOn, lastSingleSw, swSpinState, swDisplay, onSetSwDisplay }) {
   const [selectedSw, setSelectedSw] = useState(null);  // 1..N ou null
   const [cardTab, setCardTab] = useState('gear');      // 'gear' | 'display'
   const [pickerOpen, setPickerOpen] = useState(false); // popup de selecao de modo
@@ -4286,6 +4970,23 @@ function LiveModePanel({ presetCount, swModes, onSetSwMode, swParams, onSetSwPar
         {switches.map((n) => {
           const disp = (swDisplay && swDisplay[n]) || DEFAULT_SW_DISPLAY();
           const ledOn = Array.isArray(swLiveOn) ? !!swLiveOn[n - 1] : false;
+          const activeMode = modeOf(n);
+          const modeEntry = SW_MODES.find((m) => m.id === activeMode);
+          const modeLabel = (modeEntry && modeEntry.title) || activeMode.toUpperCase();
+          // Cor do LED do modo ativo (campo `color` nos params do modo).
+          // Se nao tem params salvos, usa o default do modo. mute = OFF.
+          let ledColorId = 14;  // OFF default
+          if (activeMode !== 'mute') {
+            const params = (swParams && swParams[n] && swParams[n][activeMode])
+              || DEFAULT_SW_PARAMS(activeMode);
+            if (params && typeof params.color === 'number') ledColorId = params.color;
+          }
+          const ledColorHex = (LED_COLORS[ledColorId] || LED_COLORS[14]).hex;
+          // Para SPIN, passa o spinState atual (0/1/2 ou -1 awaiting) pra
+          // o tile pintar com a cor do estado correto. Outros modos usam
+          // on/off do swLiveOn como sempre.
+          const spinStateForTile = activeMode === 'spin' && Array.isArray(swSpinState)
+            ? swSpinState[n - 1] : null;
           return (
             <button
               key={n}
@@ -4293,12 +4994,16 @@ function LiveModePanel({ presetCount, swModes, onSetSwMode, swParams, onSetSwPar
               className={'bf-sw-btn bf-sw-btn-tile' + (selectedSw === n ? ' is-active' : '')}
               onClick={() => selectSw(n)}
             >
-              <SwDisplayTile
-                disp={disp}
-                on={ledOn}
-                size={86}
-                labelBelow={`SW${n}`}
-              />
+              <SwDisplayTile disp={disp} on={ledOn} spinState={spinStateForTile} size={120} />
+              <span className="bf-sw-btn-info-line">
+                SW · {n} ·
+                <span
+                  className="bf-sw-btn-info-dot"
+                  style={{ background: ledColorHex }}
+                  aria-label={`LED ${ledColorHex}`}
+                />
+              </span>
+              <span className="bf-sw-btn-mode">{modeLabel}</span>
             </button>
           );
         })}
@@ -4484,6 +5189,8 @@ function LiveModePanel({ presetCount, swModes, onSetSwMode, swParams, onSetSwPar
                 sw={selectedSw}
                 disp={(swDisplay && swDisplay[selectedSw]) || DEFAULT_SW_DISPLAY()}
                 onChange={(next) => onSetSwDisplay && onSetSwDisplay(selectedSw, next)}
+                swMode={modeOf(selectedSw)}
+                swParams={swParams}
               />
             )}
           </div>
@@ -4543,6 +5250,7 @@ function PagePresetConfig({
   showMonitor, onToggleShowMonitor,
   swModes, savedSwModes, onSetSwMode,
   swParams, savedSwParams, onSetSwParam, swLiveOn, lastSingleSw,
+  swSpinState,
   swDisplay, onSetSwDisplay,
   liveEvents, monitorEntry,
   ledPreviewLive,
@@ -4638,6 +5346,7 @@ function PagePresetConfig({
         ? <LiveModePanel presetCount={presetCount} swModes={swModes} onSetSwMode={onSetSwMode}
             swParams={swParams} onSetSwParam={onSetSwParam} ledPreviewLive={ledPreviewLive}
             swLiveOn={swLiveOn} lastSingleSw={lastSingleSw}
+            swSpinState={swSpinState}
             swDisplay={swDisplay} onSetSwDisplay={onSetSwDisplay} />
         : <PresetEditorCard tag={tag} onDisplayNameChange={onDisplayNameChange} onRegisterSave={onRegisterPresetSave} savedSwModes={savedSwModes} savedSwParams={savedSwParams} />}
 
@@ -4936,6 +5645,8 @@ function PageGlobalConfig({
   letterLedColors, setLetterLedColors,
   switchLedColors, setSwitchLedColors,
   ledPreviewLive, setLedPreviewLive,
+  gigView, setGigView,
+  liveLayout, setLiveLayout,
   presetCount,
   deviceState, usbState, onToggleUsb,
   connectionMode, onToggleConnectionMode,
@@ -5022,15 +5733,66 @@ function PageGlobalConfig({
       )}
 
       {section === 'display' && (
-        <div className="bf-card">
-          <div className="bf-card-head">
-            <h3>Display</h3>
-            <span className="meta">EM BREVE</span>
+        <>
+          {/* GIG VIEW — controla o que o display do pedal mostra durante
+              o uso ao vivo. Padrao: segue o modo real (BANK ou LIVE).
+              Forcado: trava num dos dois pra evitar trocar acidentalmente. */}
+          <div className="bf-card">
+            <div className="bf-card-head">
+              <h3>Gig View</h3>
+              <span className="meta">
+                {gigView === 'preset' ? 'ONLY PRESET'
+                  : gigView === 'live' ? 'ONLY LIVE'
+                  : 'PADRAO'}
+              </span>
+            </div>
+            <div className="bf-seg">
+              <button
+                className={gigView === 'padrao' ? 'is-active' : ''}
+                onClick={() => setGigView('padrao')}
+                title="Display segue o modo real (BANK ou LIVE)"
+              >PADRAO</button>
+              <button
+                className={gigView === 'preset' ? 'is-active' : ''}
+                onClick={() => setGigView('preset')}
+                title="Display sempre mostra o nome do preset, mesmo em LIVE"
+              >ONLY PRESET</button>
+              <button
+                className={gigView === 'live' ? 'is-active' : ''}
+                onClick={() => setGigView('live')}
+                title="Display sempre mostra a tela LIVE, mesmo em BANK"
+              >ONLY LIVE</button>
+            </div>
+            <p style={{ fontSize: 12, color: 'var(--muted)', margin: '10px 4px 0', lineHeight: 1.4 }}>
+              {gigView === 'padrao'
+                ? 'Comportamento normal: o display alterna entre BANK e LIVE conforme o modo selecionado.'
+                : gigView === 'preset'
+                  ? 'Display fica trancado na tela do PRESET — mesmo entrando em LIVE MODE.'
+                  : 'Display fica trancado na tela LIVE — mesmo voltando pra BANK MODE.'}
+            </p>
           </div>
-          <p style={{ fontSize: 13, color: 'var(--muted)', margin: '4px 4px', lineHeight: 1.5 }}>
-            Configurações de display ainda não disponíveis.
-          </p>
-        </div>
+
+          {/* LIVE MODE LAYOUT — esquema visual da tela LIVE no display.
+              Por enquanto so 2 opcoes; renderizacao real virem depois. */}
+          <div className="bf-card">
+            <div className="bf-card-head">
+              <h3>Live Mode Layout</h3>
+              <span className="meta">LAYOUT {liveLayout}</span>
+            </div>
+            <div className="bf-seg">
+              <button
+                className={liveLayout === 1 ? 'is-active' : ''}
+                onClick={() => setLiveLayout(1)}
+                title="Layout 1"
+              >LAYOUT 1</button>
+              <button
+                className={liveLayout === 2 ? 'is-active' : ''}
+                onClick={() => setLiveLayout(2)}
+                title="Layout 2"
+              >LAYOUT 2</button>
+            </div>
+          </div>
+        </>
       )}
 
       {section === 'leds' && (
@@ -6274,6 +7036,12 @@ function App() {
   // LED PREVIEW LIVE MODE: SW STOMP desligado mantem o pixel central aceso.
   // Padrao ON — sincronizado com /config/global no load.
   const [ledPreviewLive, setLedPreviewLive] = useState(true);
+  // GIG VIEW: 'padrao' | 'preset' | 'live'. Mapeia 0/1/2 do firmware.
+  // Padrao 'padrao' = comportamento atual (display segue o modo real).
+  const [gigView, setGigView] = useState('padrao');
+  // LIVE MODE LAYOUT: 1 ou 2. Por enquanto so persiste o valor — a
+  // renderizacao real dos dois layouts fica pra fase futura.
+  const [liveLayout, setLiveLayout] = useState(1);
 
   const [autoStartEnabled, setAutoStartEnabled] = useState(false);
   const [autoStartMode, setAutoStartMode] = useState('bank');
@@ -6364,6 +7132,10 @@ function App() {
   // Contador de taps do modo TAP TEMPO.
   const swTapCountRef = useRef([0, 0, 0, 0, 0, 0]);
   const swSpinStateRef = useRef([-1, -1, -1, -1, -1, -1]);
+  // Estado SPIN espelhado em React state pra o tile do LiveModePanel
+  // re-renderizar quando o firmware reporta novo state (1/2/3) — assim
+  // o icone troca de cor no preview ao receber o press fisico.
+  const [swSpinState, setSwSpinState] = useState([-1, -1, -1, -1, -1, -1]);
   // Qual SW em SINGLE foi o ultimo a disparar (vindo do firmware).
   // -1 = nenhum. Usado pelo SwSingleEditor pra mostrar o LED aceso.
   const [lastSingleSw, setLastSingleSw] = useState(-1);
@@ -6846,6 +7618,13 @@ function App() {
       if (Array.isArray(config.bank_letter_enabled)) setBankLetterEnabled([0, 1, 2, 3, 4].map((i) => Number(config.bank_letter_enabled[i]) === 1));
       if (typeof config.bank_change_mode !== 'undefined') setBankChangeMode(clamp(config.bank_change_mode, 1, 2) || 1);
       if (typeof config.led_preview_live_mode !== 'undefined') setLedPreviewLive(Number(config.led_preview_live_mode) === 1);
+      if (typeof config.gig_view !== 'undefined') {
+        const g = Number(config.gig_view);
+        setGigView(g === 1 ? 'preset' : g === 2 ? 'live' : 'padrao');
+      }
+      if (typeof config.live_layout !== 'undefined') {
+        setLiveLayout(Number(config.live_layout) === 2 ? 2 : 1);
+      }
       // deviceState e atualizado por pingHttp, nao aqui (load pode ter vindo via USB).
     }
     tryLoad();
@@ -6871,6 +7650,13 @@ function App() {
     if (Array.isArray(config.bank_letter_enabled)) setBankLetterEnabled([0, 1, 2, 3, 4].map((i) => Number(config.bank_letter_enabled[i]) === 1));
     if (typeof config.bank_change_mode !== 'undefined') setBankChangeMode(clamp(config.bank_change_mode, 1, 2) || 1);
     if (typeof config.led_preview_live_mode !== 'undefined') setLedPreviewLive(Number(config.led_preview_live_mode) === 1);
+    if (typeof config.gig_view !== 'undefined') {
+      const g = Number(config.gig_view);
+      setGigView(g === 1 ? 'preset' : g === 2 ? 'live' : 'padrao');
+    }
+    if (typeof config.live_layout !== 'undefined') {
+      setLiveLayout(Number(config.live_layout) === 2 ? 2 : 1);
+    }
     // deviceState (WiFi) e atualizado por pingHttp, independente do transport
     // de edicao.
   }, [loadGlobalConfig]);
@@ -7025,6 +7811,14 @@ function App() {
       }
       if (newSpinState) {
         swSpinStateRef.current = newSpinState;
+        // So dispara re-render se mudou — Array.from chega como nova ref
+        // todo poll, comparar item-a-item evita renders inuteis.
+        setSwSpinState((cur) => {
+          for (let i = 0; i < 6; i++) {
+            if (cur[i] !== newSpinState[i]) return newSpinState;
+          }
+          return cur;
+        });
       }
       if (newLastSingle !== null) {
         setLastSingleSw((cur) => (cur === newLastSingle ? cur : newLastSingle));
@@ -7113,6 +7907,7 @@ function App() {
       } else {
         swSpinStateRef.current = [-1, -1, -1, -1, -1, -1];
       }
+      setSwSpinState(swSpinStateRef.current);
       if (typeof bank.last_single_sw !== 'undefined') {
         setLastSingleSw(Number(bank.last_single_sw));
       } else {
@@ -7233,6 +8028,8 @@ function App() {
       bankLetterEnabled.forEach((on, i) => body.set(`bank_letter_enabled_${i}`, on ? '1' : '0'));
       body.set('bank_change_mode', String(bankChangeMode));
       body.set('led_preview_live_mode', ledPreviewLive ? '1' : '0');
+      body.set('gig_view', gigView === 'preset' ? '1' : gigView === 'live' ? '2' : '0');
+      body.set('live_layout', liveLayout === 2 ? '2' : '1');
       LED_COLORS.forEach((c) => body.set(`color_${c.id}`, c.rgb.join(',')));
 
       await apiCall('POST', '/config/global', body);
@@ -7320,6 +8117,7 @@ function App() {
             onSetSwParam={setSwParam}
             swLiveOn={swLiveOn}
             lastSingleSw={lastSingleSw}
+            swSpinState={swSpinState}
             swDisplay={swDisplay}
             onSetSwDisplay={setSwDisplayOne}
             liveEvents={liveEvents}
@@ -7340,6 +8138,8 @@ function App() {
             letterLedColors={letterLedColors} setLetterLedColors={setLetterLedColors}
             switchLedColors={switchLedColors} setSwitchLedColors={setSwitchLedColors}
             ledPreviewLive={ledPreviewLive} setLedPreviewLive={setLedPreviewLive}
+            gigView={gigView} setGigView={setGigView}
+            liveLayout={liveLayout} setLiveLayout={setLiveLayout}
             presetCount={presetCount}
             deviceState={deviceState}
             usbState={usbState}

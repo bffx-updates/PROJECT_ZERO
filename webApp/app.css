@@ -3233,7 +3233,10 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
 .bf-sw-tile {
   position: relative;
   border-radius: 8px;
-  background: #0a0a0c;
+  /* Sem background default — quando BACK e transparente, o fundo do
+     container pai (botao SW ou card do editor) aparece naturalmente.
+     Cor solida e setada inline em React quando o usuario escolhe. */
+  background: transparent;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -3257,25 +3260,43 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
   margin-top: 2px;
   opacity: 0.95;
 }
-.bf-sw-tile-label {
-  position: absolute;
-  bottom: -22px;
-  left: 0; right: 0;
-  text-align: center;
+/* Botao SW1..SW6 do LIVE: tile centralizado em cima + 2 linhas de texto
+   embaixo (SW · N · ● e o nome do modo). Sem moldura externa adicional
+   — o proprio .bf-sw-btn da o frame. */
+.bf-sw-btn-tile {
+  padding: 8px 6px 10px;
+  gap: 4px;
+  align-items: center;
+}
+.bf-sw-btn-info-line {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.1em;
-  color: var(--muted);
+  color: var(--text);
+  margin-top: 4px;
 }
-.bf-sw-btn-tile .bf-sw-tile-label { display: none; }
-
-/* O label SW1..SW6 fica EMBAIXO do tile, fora do container; precisa
-   compensar o padding do botao pra nao ser cortado. */
-.bf-sw-btn-tile {
-  padding-bottom: 22px;
+.bf-sw-btn-info-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  box-shadow: 0 0 5px currentColor;
 }
-.bf-sw-btn-tile .bf-sw-tile-label { display: block; }
+.bf-sw-btn-mode {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  color: var(--text);
+  text-transform: uppercase;
+  text-align: center;
+  width: 100%;
+}
 
 /* Editor da aba DISPLAY (3 toggles de cor + preview + sigla) */
 .bf-sw-disp {
@@ -3288,6 +3309,27 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
   grid-template-columns: 1fr 1fr 1fr;
   gap: 10px;
 }
+/* Abas SPIN1/SPIN2/SPIN3 do editor de display em modo SPIN. Reusa o .bf-seg
+   (segmented control padrao do app). */
+.bf-sw-disp-spin-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.bf-sw-disp-spin-hint {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  line-height: 1.4;
+}
+.bf-sw-disp-spin-hint strong {
+  color: var(--text);
+  font-weight: 700;
+}
+
 .bf-sw-disp-color {
   display: flex;
   flex-direction: column;
@@ -3339,13 +3381,15 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
 .bf-sw-disp-preview-row {
   display: grid;
   grid-template-columns: auto 1fr;
-  gap: 14px;
-  align-items: center;
+  gap: 12px;
+  align-items: stretch;
 }
 .bf-sw-disp-preview {
   appearance: none;
   border: 1px solid var(--hair);
-  background: #0a0a0c;
+  /* Transparente pra quando BACK=transparente a moldura mostrar o
+     fundo da pagina/card, espelhando o comportamento do tile no LIVE. */
+  background: transparent;
   border-radius: 14px;
   padding: 8px;
   cursor: pointer;
@@ -3360,10 +3404,20 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
   display: flex;
   flex-direction: column;
   gap: 8px;
+  /* Stretch pra ocupar mesma altura do tile do preview (96px + padding).
+     Distribui PREVIEW + sigla pra preencher simetricamente. */
+  justify-content: space-between;
 }
 .bf-sw-disp-toggles .bf-input-num {
   min-height: 44px;
   font-size: 13px;
+}
+.bf-sw-disp-toggles .bf-sw-disp-sigla {
+  margin: 0;
+  flex: 0 0 auto;
+}
+.bf-sw-disp-toggles .bf-sw-disp-sigla .bf-field-label {
+  margin-bottom: 2px;
 }
 
 .bf-sw-disp-sigla .bf-input {
@@ -3403,4 +3457,13 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
 .bf-sw-icon-cell.is-active {
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 18%, #0e0e12);
+}
+
+/* Celula coringa "TEXT" no picker — texto centralizado, sem icone.
+   Selecionar essa entrada coloca o SW em mode='text'. */
+.bf-sw-icon-cell-text span {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
 }
