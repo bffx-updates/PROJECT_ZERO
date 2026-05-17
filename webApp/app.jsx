@@ -5698,6 +5698,48 @@ function ConnectionScreen({ onWifiConnect, onUsbToggle, usbState, error,
   );
 }
 
+// Modal de progresso pra PASTE PRESET / PASTE BANK. Bloqueante (sem
+// click-to-close no backdrop) — fecha sozinho quando o paste termina.
+// Reusa a barra .bf-backup-progress* (mesmo visual do backup/restore).
+function PasteProgressModal({ progress }) {
+  if (!progress) return null;
+  const pct = progress.total > 0
+    ? Math.min(100, Math.round((progress.step / progress.total) * 100))
+    : null;
+  const title = progress.kind === 'bank'
+    ? 'COLANDO BANCO' : 'COLANDO PRESET';
+  return ReactDOM.createPortal(
+    <div className="bf-modal-backdrop">
+      <div className="bf-modal" role="dialog" aria-label={title}
+           onClick={(e) => e.stopPropagation()}>
+        <div className="bf-modal-head">
+          <span className="bf-modal-title">{title}</span>
+        </div>
+        <div style={{ padding: '16px 18px 18px' }}>
+          <div className="bf-backup-progress" style={{ marginTop: 0 }}>
+            <div className="bf-backup-progress-track">
+              <div
+                className={'bf-backup-progress-fill' +
+                           (pct == null ? ' is-indeterminate' : '')}
+                style={pct != null ? { width: pct + '%' } : undefined}
+              />
+            </div>
+            <div className="bf-backup-progress-info">
+              <span>{progress.label || '…'}</span>
+              <span className="bf-backup-progress-bytes">
+                {pct != null
+                  ? `${progress.step}/${progress.total}`
+                  : '…'}
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
 // ─── Root ───────────────────────────────────────────────────────────
 function App() {
   const [page, setPage] = useState('preset_config');
@@ -5955,6 +5997,10 @@ function App() {
   // o clipboard de preset — pode demorar varios segundos pra colar.
   const [bankClipboard, setBankClipboard] = useState(null);
   const [bankClipboardStatus, setBankClipboardStatus] = useState('idle');
+  // Progresso visual do PASTE PRESET / PASTE BANK. null = sem operacao.
+  // { kind: 'preset'|'bank', step, total, label } — exibido em modal
+  // bloqueante via <PasteProgressModal>. Cada API call avanca o step.
+  const [pasteProgress, setPasteProgress] = useState(null);
   // Snapshot do preset atual exibido no MONITOR. Reconstruido pelo
   // useEffect abaixo a partir do savedMeta + savedSwModes + savedSwParams.
   const [monitorEntry, setMonitorEntry] = useState(null);
@@ -6069,6 +6115,62 @@ function App() {
     setTimeout(() => setPresetClipboardStatus('idle'), 1500);
   }, [currentSavedMeta, savedSwModes, savedSwParams]);
 
+  // Helper compartilhado entre PASTE PRESET e PASTE BANK. Aplica um
+  // snapshot (meta + swModes + swParams) em um preset destino.
+  //
+  // Cuidado importante: o destino pode ter dados antigos em sw<N>.<modo>
+  // de um uso anterior. Se o snapshot fonte nao tem entrada pra um modo
+  // que VAI ficar ATIVO no destino (porque o usuario nunca abriu o
+  // editor desse modo na origem), o POST de params nao acontece e o
+  // destino continua usando a config antiga daquele modo — gerando o
+  // bug "SWs com opcoes um pouco diferentes" depois do paste. Pra
+  // corrigir, materializamos DEFAULT_SW_PARAMS(activeMode) quando o
+  // snapshot nao tem entrada — assim o destino sempre fica com o
+  // mesmo comportamento que a origem tinha.
+  //
+  // onStep(label) e chamado a cada API call (header + cada sw/mode),
+  // pra o modal de progresso avancar. countPasteSteps abaixo pre-calcula
+  // o total de calls pro componente conseguir desenhar a barra.
+  const pastePresetToDest = useCallback(async (destTag, src, onStep) => {
+    onStep && onStep('Header');
+    const headerBody = metaToApiBody(src.meta);
+    headerBody.set('sw_modes', swModesToStr(src.swModes));
+    await apiCall('POST',
+      `/bank/preset?bank=${encodeURIComponent(destTag)}`, headerBody);
+
+    for (let sw = 1; sw <= 6; sw++) {
+      const modes = { ...((src.swParams || {})[sw] || {}) };
+      const activeMode = (src.swModes || {})[sw] || 'mute';
+      // Garante que o MODO ATIVO sempre tem params escritos no destino,
+      // mesmo que a origem nunca tenha aberto o editor pra esse modo.
+      if (activeMode !== 'mute' && !modes[activeMode]) {
+        modes[activeMode] = DEFAULT_SW_PARAMS(activeMode);
+      }
+      const modeIds = Object.keys(modes);
+      for (const modeId of modeIds) {
+        onStep && onStep(`SW${sw} · ${modeId}`);
+        await apiCall('POST',
+          `/sw/params?bank=${encodeURIComponent(destTag)}&sw=${sw}` +
+          `&mode=${encodeURIComponent(modeId)}`,
+          swParamsToApiBody(modes[modeId]));
+      }
+    }
+  }, []);
+
+  // Conta quantas chamadas o paste vai fazer (1 header + 1 por sw/mode
+  // que sera escrito). Usado pra montar a barra de progresso ANTES do
+  // primeiro request, pra o usuario ja ver o "X de Y" desde o inicio.
+  const countPasteSteps = useCallback((src) => {
+    let n = 1; // header POST
+    for (let sw = 1; sw <= 6; sw++) {
+      const modes = { ...((src.swParams || {})[sw] || {}) };
+      const activeMode = (src.swModes || {})[sw] || 'mute';
+      if (activeMode !== 'mute' && !modes[activeMode]) modes[activeMode] = {};
+      n += Object.keys(modes).length;
+    }
+    return n;
+  }, []);
+
   // PASTE PRESET — aplica o clipboard no preset ATUAL (currentTag).
   // Sobrescreve meta (header), sw_modes e sw_params no firmware via API
   // e atualiza o state local. Nao copia o tag (preset identity fica).
@@ -6082,35 +6184,30 @@ function App() {
       return;
     }
     setPresetClipboardStatus('pasting');
+    const total = countPasteSteps(presetClipboard);
+    let step = 0;
+    setPasteProgress({
+      kind: 'preset', step: 0, total,
+      label: `Colando preset em ${tag}…`,
+    });
     try {
-      // 1) Meta + sw_modes num POST /bank/preset (mesma rota do SAVE).
-      const headerBody = metaToApiBody(presetClipboard.meta);
-      // Inclui sw_modes ja codificado.
-      headerBody.set('sw_modes', swModesToStr(presetClipboard.swModes));
-      await apiCall('POST',
-        `/bank/preset?bank=${encodeURIComponent(tag)}`, headerBody);
-
-      // 2) Params por SW/modo — itera o clipboard.swParams.
-      for (let sw = 1; sw <= 6; sw++) {
-        const modes = (presetClipboard.swParams || {})[sw] || {};
-        for (const modeId of Object.keys(modes)) {
-          await apiCall('POST',
-            `/sw/params?bank=${encodeURIComponent(tag)}&sw=${sw}` +
-            `&mode=${encodeURIComponent(modeId)}`,
-            swParamsToApiBody(modes[modeId]));
-        }
-      }
-
-      // 3) Re-carrega o preset pra refletir o estado novo no UI.
+      await pastePresetToDest(tag, presetClipboard, (sublabel) => {
+        step += 1;
+        setPasteProgress({
+          kind: 'preset', step, total,
+          label: `Colando em ${tag} · ${sublabel}`,
+        });
+      });
       await loadSwParams(tag);
-      // O proximo poll de /bank/current sincroniza meta/sw_modes.
+      setPasteProgress(null);
       setPresetClipboardStatus('pasted');
       setTimeout(() => setPresetClipboardStatus('idle'), 1500);
     } catch (e) {
+      setPasteProgress(null);
       setPresetClipboardStatus('error');
       setTimeout(() => setPresetClipboardStatus('idle'), 1800);
     }
-  }, [presetClipboard]);
+  }, [presetClipboard, pastePresetToDest, countPasteSteps]);
 
   // COPY BANK — varre todos os 6 presets do banco atual (A..E) e
   // armazena um snapshot completo. Faz 12 GETs (6 metas + 6 sw_params).
@@ -6155,36 +6252,41 @@ function App() {
       return;
     }
     setBankClipboardStatus('pasting');
+    // Soma os steps de todos os 6 presets pra a barra cobrir o bank todo.
+    const total = bankClipboard.presets.reduce(
+      (acc, src) => acc + countPasteSteps(src), 0);
+    let step = 0;
+    setPasteProgress({
+      kind: 'bank', step: 0, total,
+      label: `Colando banco em ${letter}…`,
+    });
     try {
-      for (const src of bankClipboard.presets) {
+      for (let i = 0; i < bankClipboard.presets.length; i++) {
+        const src = bankClipboard.presets[i];
         // src.tag e o tag de origem (ex: A1, A2...). Reescreve no destino
         // mantendo o numero do preset (1..6), so trocando a letra.
         const presetNum = parseInt(src.tag.slice(1), 10) || 1;
         const destTag = `${letter}${presetNum}`;
-        const headerBody = metaToApiBody(src.meta);
-        headerBody.set('sw_modes', swModesToStr(src.swModes));
-        await apiCall('POST',
-          `/bank/preset?bank=${encodeURIComponent(destTag)}`, headerBody);
-        for (let sw = 1; sw <= 6; sw++) {
-          const modes = (src.swParams || {})[sw] || {};
-          for (const modeId of Object.keys(modes)) {
-            await apiCall('POST',
-              `/sw/params?bank=${encodeURIComponent(destTag)}&sw=${sw}` +
-              `&mode=${encodeURIComponent(modeId)}`,
-              swParamsToApiBody(modes[modeId]));
-          }
-        }
+        await pastePresetToDest(destTag, src, (sublabel) => {
+          step += 1;
+          setPasteProgress({
+            kind: 'bank', step, total,
+            label: `Preset ${i + 1}/6 · ${destTag} · ${sublabel}`,
+          });
+        });
       }
       // Re-carrega o preset corrente pra refletir mudancas no UI.
       const curTag = currentTagRef.current;
       if (curTag) await loadSwParams(curTag);
+      setPasteProgress(null);
       setBankClipboardStatus('pasted');
       setTimeout(() => setBankClipboardStatus('idle'), 1500);
     } catch (e) {
+      setPasteProgress(null);
       setBankClipboardStatus('error');
       setTimeout(() => setBankClipboardStatus('idle'), 1800);
     }
-  }, [bankClipboard, bankLetterIndex]);
+  }, [bankClipboard, bankLetterIndex, pastePresetToDest, countPasteSteps]);
 
   // Edita um campo de um SW/modo. Cria a entrada com os defaults do modo
   // se ainda nao existir. Local — persistido pelo SAVE do rodape.
@@ -6916,6 +7018,7 @@ function App() {
           bankClipboardStatus={bankClipboardStatus}
         />
       </div>
+      <PasteProgressModal progress={pasteProgress} />
     </div>
   );
 }
