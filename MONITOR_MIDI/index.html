@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>BFMIDI · Monitor USB</title>
+<link rel="stylesheet" href="monitor.css" />
+</head>
+<body>
+  <div class="bf-screen">
+    <header class="bf-header">
+      <div class="bf-header-title">MONITOR · USB MIDI</div>
+      <div class="bf-header-sub">Leitura crua de mensagens MIDI USB · Web MIDI API</div>
+    </header>
+
+    <div class="bf-toolbar">
+      <label class="bf-tool">
+        <span class="bf-tool-label">ENTRADA</span>
+        <div class="bf-select-wrap">
+          <select id="midi-input" class="bf-input bf-select">
+            <option value="">— solicitando acesso —</option>
+          </select>
+          <span class="bf-select-chev">▾</span>
+        </div>
+      </label>
+      <button id="btn-pause" type="button" class="bf-tool-btn">PAUSAR</button>
+      <button id="btn-clear" type="button" class="bf-tool-btn">LIMPAR</button>
+      <button id="btn-copy"  type="button" class="bf-tool-btn">COPIAR</button>
+    </div>
+
+    <main class="bf-content">
+      <div class="bf-live-monitor">
+        <div class="bf-live-monitor-head">
+          <span id="monitor-title">MONITOR · USB MIDI</span>
+          <span id="monitor-status" class="bf-monitor-status">aguardando…</span>
+        </div>
+        <div class="bf-live-monitor-body">
+          <div id="monitor-events" class="bf-monitor-events-section">
+            <div class="bf-monitor-event-empty">
+              (sem mensagens — conecte um dispositivo MIDI USB e toque algo)
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <footer class="bf-footer">
+      <div class="bf-footer-row">
+        <label class="bf-toggle">
+          <input id="opt-clock" type="checkbox" />
+          <span>Mostrar Clock (F8)</span>
+        </label>
+        <label class="bf-toggle">
+          <input id="opt-active" type="checkbox" />
+          <span>Mostrar Active Sense (FE)</span>
+        </label>
+        <label class="bf-toggle">
+          <input id="opt-collapse" type="checkbox" checked />
+          <span>Colapsar mensagens repetidas</span>
+        </label>
+        <label class="bf-toggle">
+          <input id="opt-autoclear" type="checkbox" />
+          <span>Auto-clear após 1s sem MIDI</span>
+        </label>
+        <label class="bf-toggle">
+          <input id="opt-autoscroll" type="checkbox" checked />
+          <span>Auto-scroll</span>
+        </label>
+        <label class="bf-toggle">
+          <span>Máx eventos</span>
+          <input id="opt-max" type="number" min="20" max="2000" value="300"
+                 class="bf-input bf-input-num" />
+        </label>
+      </div>
+    </footer>
+  </div>
+
+  <script src="monitor.js"></script>
+</body>
+</html>

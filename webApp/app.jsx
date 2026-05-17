@@ -404,12 +404,11 @@ function FootswitchArc({ label, colorId, onChange, litArcs, labelInside }) {
     return `M ${x1} ${y1} A ${r} ${r} 0 0 1 ${x2} ${y2}`;
   };
 
-  useEffect(() => {
-    if (!open) return;
-    const onDoc = (e) => { if (!ref.current?.contains(e.target)) setOpen(false); };
-    document.addEventListener('mousedown', onDoc);
-    return () => document.removeEventListener('mousedown', onDoc);
-  }, [open]);
+  // Fechar ao clicar fora ja e responsabilidade do .bf-modal-backdrop
+  // (renderizado em portal). Antes tinhamos um mousedown global aqui que,
+  // depois que o popup virou portal, considerava CADA swatch como "fora"
+  // do ref.current — o close disparava no mousedown antes do onClick do
+  // swatch rodar, e a nova cor nunca chegava no onChange. Removido.
 
   return (
     <div className={'bf-fsw' + (labelInside ? ' has-label-inside' : '')} ref={ref} style={{ position: 'relative' }}>
@@ -553,12 +552,11 @@ function ColorBar({ label, colorId, onChange, restrictTypes }) {
   const safe = DISPLAY_PALETTE[safeId] || DISPLAY_PALETTE[0];
   const fill = paletteBackground(safe);
 
-  useEffect(() => {
-    if (!open) return;
-    const onDoc = (e) => { if (!ref.current?.contains(e.target)) setOpen(false); };
-    document.addEventListener('mousedown', onDoc);
-    return () => document.removeEventListener('mousedown', onDoc);
-  }, [open]);
+  // Fechar ao clicar fora ja e responsabilidade do .bf-modal-backdrop
+  // (renderizado em portal). Antes tinhamos um mousedown global aqui que,
+  // depois que o popup virou portal, considerava CADA swatch como "fora"
+  // do ref.current — o close disparava no mousedown antes do onClick do
+  // swatch rodar, e a nova cor nunca chegava no onChange. Removido.
 
   const allowType = (t) => !restrictTypes || restrictTypes.includes(t);
   const sectionDefs = [
@@ -1216,7 +1214,10 @@ const SW_MODES = [
   { id: 'spin',      title: 'SPIN',      sub: 'SPIN' },
   { id: 'ramp',      title: 'RAMPA',     sub: 'RAMP' },
   { id: 'momentary', title: 'MOMENTARY', sub: 'MOMENTARY' },
-  { id: 'favorite',  title: 'FAVORITE',  sub: 'FAVORITE' },
+  // FAVORITE como modo separado foi removido — agora vive como toggle
+  // por secao dentro do STOMP. Mantido oculto no array pra preservar o
+  // indice 7 em SW_MODE_IDS (compat com presets antigos).
+  { id: 'favorite',  title: 'FAVORITE',  sub: 'FAVORITE', hidden: true },
   { id: 'macros',    title: 'MACROS',    sub: 'MACROS' },
   { id: 'tap_tempo', title: 'TAP TEMPO', sub: 'TAP TEMPO' },
   { id: 'single',    title: 'SINGLE',    sub: 'SINGLE' },
@@ -1346,14 +1347,16 @@ function serializeSingleSlots(slots) {
 // na hora do disparo, sem type CC/PC). Storage: "ch:num,ch:num,..." (4).
 // TAP TEMPO slot: ch + num + mode. mode 1 = so CC+127 (classico). mode 2
 // = CC+127 seguido de CC+0 (pulse). Formato compacto "ch:num:mode";
-// formato legado "ch:num" (sem mode) cai em mode=1.
+// formato legado "ch:num" (sem mode) cai em mode=1. Maximo 3 slots
+// (sobra espaco no UI pra um slot fixo de long-press separado).
+const TAP_MAX_SLOTS = 3;
 function emptyTapSlot() { return { ch: 0, num: 0, mode: 1 }; }
-function emptyTapSlotsStr() { return '0:0:1,0:0:1,0:0:1,0:0:1'; }
+function emptyTapSlotsStr() { return '0:0:1,0:0:1,0:0:1'; }
 function parseTapSlots(str) {
-  const out = [emptyTapSlot(), emptyTapSlot(), emptyTapSlot(), emptyTapSlot()];
+  const out = Array.from({ length: TAP_MAX_SLOTS }, () => emptyTapSlot());
   if (typeof str !== 'string' || !str) return out;
   const parts = str.split(',');
-  for (let i = 0; i < 4 && i < parts.length; i++) {
+  for (let i = 0; i < TAP_MAX_SLOTS && i < parts.length; i++) {
     const p = (parts[i] || '').split(':');
     if (p.length < 2) continue;
     const ch = parseInt(p[0], 10);
@@ -1368,30 +1371,111 @@ function parseTapSlots(str) {
   return out;
 }
 function serializeTapSlots(slots) {
-  const four = (slots || []).slice(0, 4);
-  while (four.length < 4) four.push(emptyTapSlot());
-  return four.map((s) => `${s.ch|0}:${s.num|0}:${s.mode === 2 ? 2 : 1}`).join(',');
+  const arr = (slots || []).slice(0, TAP_MAX_SLOTS);
+  while (arr.length < TAP_MAX_SLOTS) arr.push(emptyTapSlot());
+  return arr.map((s) => `${s.ch|0}:${s.num|0}:${s.mode === 2 ? 2 : 1}`).join(',');
+}
+
+// SPIN slot — ch + num + 3 valores (um por estado). Ate 3 slots por SW,
+// disparados simultaneamente em cada press (mesmo estado). Formato:
+// "ch:num:v1:v2:v3,ch:num:v1:v2:v3,ch:num:v1:v2:v3".
+function emptySpinSlot() {
+  return { ch: 0, num: 0, v1: 0, v2: 64, v3: 127 };
+}
+function emptySpinSlotsStr() {
+  return '0:0:0:64:127,0:0:0:64:127,0:0:0:64:127';
+}
+function parseSpinSlots(str) {
+  const out = [emptySpinSlot(), emptySpinSlot(), emptySpinSlot()];
+  if (typeof str !== 'string' || !str) return out;
+  const parts = str.split(',');
+  for (let i = 0; i < 3 && i < parts.length; i++) {
+    const p = (parts[i] || '').split(':');
+    if (p.length < 2) continue;
+    const ch = parseInt(p[0], 10);
+    const num = parseInt(p[1], 10);
+    const v1 = p.length >= 3 ? parseInt(p[2], 10) : 0;
+    const v2 = p.length >= 4 ? parseInt(p[3], 10) : 64;
+    const v3 = p.length >= 5 ? parseInt(p[4], 10) : 127;
+    out[i] = {
+      ch: Number.isFinite(ch) ? clamp(ch, 0, 16) : 0,
+      num: Number.isFinite(num) ? clamp(num, 0, 127) : 0,
+      v1: Number.isFinite(v1) ? clamp(v1, 0, 127) : 0,
+      v2: Number.isFinite(v2) ? clamp(v2, 0, 127) : 64,
+      v3: Number.isFinite(v3) ? clamp(v3, 0, 127) : 127,
+    };
+  }
+  return out;
+}
+function serializeSpinSlots(slots) {
+  const arr = (slots || []).slice(0, 3);
+  while (arr.length < 3) arr.push(emptySpinSlot());
+  return arr.map((s) =>
+    `${s.ch|0}:${s.num|0}:${s.v1|0}:${s.v2|0}:${s.v3|0}`).join(',');
+}
+
+// MOMENTARY slot — pulse de ch+num com par on/off. Formato "ch:num:on:off"
+// (4 campos), ate 4 slots. Cada press do SW dispara TODOS os slots em
+// sequencia: ON, delay, OFF. Default: on=127, off=0.
+const MOM_MAX_SLOTS = 4;
+function emptyMomSlot() { return { ch: 0, num: 0, on: 127, off: 0 }; }
+function emptyMomSlotsStr() { return '0:0:127:0,0:0:127:0,0:0:127:0,0:0:127:0'; }
+function parseMomSlots(str) {
+  const out = Array.from({ length: MOM_MAX_SLOTS }, () => emptyMomSlot());
+  if (typeof str !== 'string' || !str) return out;
+  const parts = str.split(',');
+  for (let i = 0; i < MOM_MAX_SLOTS && i < parts.length; i++) {
+    const p = (parts[i] || '').split(':');
+    if (p.length < 2) continue;
+    const ch = parseInt(p[0], 10);
+    const num = parseInt(p[1], 10);
+    const on = p.length >= 3 ? parseInt(p[2], 10) : 127;
+    const off = p.length >= 4 ? parseInt(p[3], 10) : 0;
+    out[i] = {
+      ch: Number.isFinite(ch) ? clamp(ch, 0, 16) : 0,
+      num: Number.isFinite(num) ? clamp(num, 0, 127) : 0,
+      on: Number.isFinite(on) ? clamp(on, 0, 127) : 127,
+      off: Number.isFinite(off) ? clamp(off, 0, 127) : 0,
+    };
+  }
+  return out;
+}
+function serializeMomSlots(slots) {
+  const arr = (slots || []).slice(0, MOM_MAX_SLOTS);
+  while (arr.length < MOM_MAX_SLOTS) arr.push(emptyMomSlot());
+  return arr.map((s) =>
+    `${s.ch|0}:${s.num|0}:${s.on|0}:${s.off|0}`).join(',');
 }
 
 function DEFAULT_SW_PARAMS(modeId) {
   if (modeId === 'fx1' || modeId === 'fx3') {
     return {
       num: 0, ch: 0, custom: 0, on: 127, off: 0, start: 0, at_preset: 1, color: 1,
+      fav: 0, fav_bank: 0, fav_preset: 1, fav_mode: 0,
       num2: 0, ch2: 0, custom2: 0, on2: 127, off2: 0, start2: 0, at_preset2: 1, color2: 1,
+      fav2: 0, fav_bank2: 0, fav_preset2: 1, fav_mode2: 0,
       num3: 0, ch3: 0, custom3: 0, on3: 127, off3: 0, start3: 0, at_preset3: 1, color3: 1,
+      fav3: 0, fav_bank3: 0, fav_preset3: 1, fav_mode3: 0,
     };
   }
   if (modeId === 'fx2') {
     return {
       num: 0, ch: 0, custom: 0, on: 127, off: 0, start: 0, at_preset: 1, color: 1,
+      fav: 0, fav_bank: 0, fav_preset: 1, fav_mode: 0,
       num2: 0, ch2: 0, custom2: 0, on2: 127, off2: 0, start2: 0, at_preset2: 1, color2: 1,
+      fav2: 0, fav_bank2: 0, fav_preset2: 1, fav_mode2: 0,
     };
   }
   if (modeId === 'momentary') {
-    // Mesmas chaves do STOMP click curto. `start` fica no schema por
-    // consistencia mas e ignorado (momentary nao tem estado persistente
-    // — pisar manda um pulse ON+OFF e pronto).
-    return { num: 0, ch: 0, custom: 0, on: 127, off: 0, start: 0, color: 1 };
+    // MOMENTARY: ate 4 slots em `mom_slots` ("ch:num:on:off,..."). Cada
+    // press do SW dispara TODOS os slots como pulse (ON, delay, OFF).
+    // Sem estado persistente. Campos legados (num/ch/custom/on/off) ficam
+    // como fallback do firmware pra dados antigos (slot 1).
+    return {
+      mom_slots: emptyMomSlotsStr(),
+      num: 0, ch: 0, custom: 0, on: 127, off: 0,
+      start: 0, color: 1,
+    };
   }
   if (modeId === 'macros') {
     // MACROS: 3 secoes (A=click curto, B=click longo, C=reclick) iguais
@@ -1412,11 +1496,14 @@ function DEFAULT_SW_PARAMS(modeId) {
     };
   }
   if (modeId === 'tap_tempo') {
-    // TAP TEMPO: ate 4 slots de CC (so ch e num; valor fixo 127). LED
-    // anima sozinho — idle (pixel 1 -> 2 -> 3 ciclico) ate o usuario
-    // bater o tempo, dai pisca no intervalo entre taps.
+    // TAP TEMPO: ate 3 slots de CC (ch + num + mode) + 1 slot fixo de
+    // long-press (lp_ch + lp_num + lp_val) que dispara quando o usuario
+    // segura o SW (~300ms). LED anima sozinho — idle (pixel 1 -> 2 -> 3
+    // ciclico) ate bater o tempo, dai pisca no intervalo entre taps.
     return {
       tslots: emptyTapSlotsStr(),
+      lp_ch: 0, lp_num: 0, lp_on: 127, lp_off: 0,
+      lp_start: 0, lp_at_preset: 1,
       color: 1,
     };
   }
@@ -1429,7 +1516,45 @@ function DEFAULT_SW_PARAMS(modeId) {
     return {
       sslots: emptySingleSlotsStr(),
       num: 0, ch: 0, on: 127, pc: 0, as_pc: 0,
-      at_preset: 0, color: 1,
+      at_preset: 1, color: 1,
+    };
+  }
+  if (modeId === 'spin') {
+    // SPIN — maquina de 3 estados (pixel 1, 2, 3) com ATE 3 SLOTS de CC
+    // disparados SIMULTANEAMENTE em cada estado. Cada slot tem ch + num
+    // + 3 valores (v1/v2/v3). Storage composta em `spin_slots`. Os
+    // campos legados (ch/num/val1/val2/val3 soltos) ficam como fallback
+    // pra dados antigos (vira slot 1).
+    return {
+      spin_slots: emptySpinSlotsStr(),
+      ch: 0, num: 0, val1: 0, val2: 64, val3: 127,
+      at_preset: 1, color: 1,
+    };
+  }
+  if (modeId === 'ramp') {
+    // RAMP — sweep gradual de CC entre min/max com tempo de subida/descida
+    // configuravel. Mecanica de press inspirada em controladoras tipo
+    // Boss FS-1, Strymon MultiSwitch e expression mapping de Helix:
+    //   ch, num             — destino MIDI
+    //   min_val/max_val     — valor MIDI nos extremos (default 0/127)
+    //   up_ms / down_ms     — tempo total pra ir min->max / max->min
+    //   curve               — 0=LINEAR, 1=EXP, 2=LOG, 3=SINE (S-curve)
+    //   trigger             — 0=TOGGLE (cada press flipa direcao;
+    //                                    press durante movimento INVERTE)
+    //                         1=HOLD (segura = sobe; solta = desce)
+    //                         2=LOOP (press inicia ping-pong continuo;
+    //                                 press para)
+    //   step_ms             — intervalo entre envios MIDI (default 25ms)
+    //   start_on            — estado inicial (0=min, 1=max) — so visual,
+    //                         RAMP NUNCA dispara no load do preset (so
+    //                         opera em LIVE MODE por design)
+    //   color               — LED
+    return {
+      ch: 0, num: 0,
+      min_val: 0, max_val: 127,
+      up_ms: 1000, down_ms: 1000,
+      curve: 0, trigger: 0, step_ms: 25,
+      start_on: 0, color: 1,
     };
   }
   return {};
@@ -1456,7 +1581,8 @@ function parseSwParamsObj(obj) {
       // Chaves compostas string (ex.: MACROS mslots[N] = "t:ch:num:on:off,...")
       // ficam como string; os demais campos sao numericos.
       if (k && (k === 'mslots' || k === 'mslots2' || k === 'mslots3' ||
-                k === 'sslots' || k === 'tslots')) {
+                k === 'sslots' || k === 'tslots' || k === 'mom_slots' ||
+                k === 'spin_slots')) {
         fields[k] = raw;
       } else {
         const v = parseInt(raw, 10);
@@ -1504,8 +1630,9 @@ function pcMsg(ch, pc, when) {
 function buildSnapshotStomp(sw, id, userParams) {
   const p = { ...DEFAULT_SW_PARAMS(id), ...(userParams || {}) };
   const chOK = (v) => v >= 1 && v <= 16;
-  const hasB = chOK(Number(p.ch2));
-  const hasC = id !== 'fx2' && chOK(Number(p.ch3));
+  const hasB = chOK(Number(p.ch2)) || Number(p.fav2) === 1;
+  const hasC = id !== 'fx2' &&
+               (chOK(Number(p.ch3)) || Number(p.fav3) === 1);
   const tierLabel = (s) => {
     if (hasC) return s === 0 ? 'CURTO' : s === 1 ? 'LONGO' : 'RECLICK';
     if (hasB) return s === 0 ? 'CURTO' : 'LONGO';
@@ -1515,6 +1642,9 @@ function buildSnapshotStomp(sw, id, userParams) {
   for (let s = 0; s < 3; s++) {
     if (s === 2 && id === 'fx2') continue;
     const suf = s === 0 ? '' : s === 1 ? '2' : '3';
+    // FAVORITE: secao nao dispara MIDI no load do preset (so reage a
+    // press fisico). Pula no snapshot.
+    if (Number(p['fav' + suf]) === 1) continue;
     const ch = Number(p['ch' + suf]);
     if (!chOK(ch)) continue;
     const atPreset = (typeof p['at_preset' + suf] !== 'undefined')
@@ -1606,8 +1736,63 @@ function buildSnapshotMacros(sw, userParams) {
 }
 
 function buildSnapshotTap(sw, userParams) {
-  // TAP TEMPO nao dispara na chamada do preset — so reage a press.
-  return { sw, modeLabel: 'TAP TEMPO', sections: [] };
+  // TAP TEMPO so dispara no preset se LP estiver com lp_at_preset=1.
+  // Os slots de tap nunca disparam no load (so reagem a press).
+  const p = { ...DEFAULT_SW_PARAMS('tap_tempo'), ...(userParams || {}) };
+  if (Number(p.lp_at_preset) !== 1) {
+    return { sw, modeLabel: 'TAP TEMPO', sections: [] };
+  }
+  const lpCh = Number(p.lp_ch) || 0;
+  if (lpCh < 1 || lpCh > 16) {
+    return { sw, modeLabel: 'TAP TEMPO', sections: [] };
+  }
+  const lpNum = Number(p.lp_num) || 0;
+  const startOn = Number(p.lp_start) === 1;
+  const lpOn = typeof p.lp_on !== 'undefined' ? Number(p.lp_on) : 127;
+  const lpOff = Number(p.lp_off) || 0;
+  return {
+    sw, modeLabel: 'TAP TEMPO',
+    sections: [{
+      label: 'LONG PRESS',
+      flags: [startOn ? 'START ON' : 'START OFF'],
+      messages: [ccMsg(lpCh, lpNum, startOn ? lpOn : lpOff)],
+    }],
+  };
+}
+
+function buildSnapshotSpin(sw, userParams) {
+  // SPIN fire-on-preset: se at_preset=1, envia VAL1 de cada slot
+  // configurado (estado inicial = pixel 1). Sem at_preset, nao dispara
+  // nada no load (fica awaiting).
+  const p = { ...DEFAULT_SW_PARAMS('spin'), ...(userParams || {}) };
+  if (Number(p.at_preset) !== 1) return { sw, modeLabel: 'SPIN', sections: [] };
+  const parsed = parseSpinSlots(p.spin_slots || '');
+  const hasAny = parsed.some((s) => s.ch >= 1 && s.ch <= 16);
+  const slots = parsed.slice();
+  if (!hasAny && Number(p.ch) >= 1 && Number(p.ch) <= 16) {
+    slots[0] = {
+      ch: Number(p.ch), num: Number(p.num) || 0,
+      v1: Number(p.val1) || 0,
+      v2: typeof p.val2 !== 'undefined' ? Number(p.val2) : 64,
+      v3: typeof p.val3 !== 'undefined' ? Number(p.val3) : 127,
+    };
+  }
+  const active = slots.filter((s) => s.ch >= 1 && s.ch <= 16);
+  if (active.length === 0) return { sw, modeLabel: 'SPIN', sections: [] };
+  return {
+    sw, modeLabel: 'SPIN',
+    sections: [{
+      label: 'PIXEL 1',
+      flags: [`${active.length} SLOT${active.length > 1 ? 'S' : ''}`],
+      messages: active.map((s) => ccMsg(s.ch, s.num, s.v1)),
+    }],
+  };
+}
+
+function buildSnapshotRamp(sw, userParams) {
+  // RAMP nunca dispara na chamada do preset (so opera em LIVE MODE
+  // por design). Snapshot vazio.
+  return { sw, modeLabel: 'RAMP', sections: [] };
 }
 
 function buildSnapshotSwEntry(sw, id, params) {
@@ -1619,6 +1804,8 @@ function buildSnapshotSwEntry(sw, id, params) {
   if (id === 'single')    return buildSnapshotSingle(sw, params);
   if (id === 'macros')    return buildSnapshotMacros(sw, params);
   if (id === 'tap_tempo') return buildSnapshotTap(sw, params);
+  if (id === 'ramp')      return buildSnapshotRamp(sw, params);
+  if (id === 'spin')      return buildSnapshotSpin(sw, params);
   // Outros modos ainda nao implementados — mostra so o rotulo.
   const mode = SW_MODES.find((m) => m.id === id);
   return { sw, modeLabel: mode ? (mode.sub || mode.title) : id.toUpperCase(),
@@ -1646,14 +1833,34 @@ function buildLivePressEvent(sw, section, nowOn, savedSwModes, savedSwParams) {
   if (id === 'fx1' || id === 'fx2' || id === 'fx3') {
     const p = { ...DEFAULT_SW_PARAMS(id), ...(userParams || {}) };
     const chOK = (v) => v >= 1 && v <= 16;
-    const hasB = chOK(Number(p.ch2));
-    const hasC = id !== 'fx2' && chOK(Number(p.ch3));
+    // Secao "esta ativa" se tem canal valido OU se esta como FAVORITE.
+    const hasB = chOK(Number(p.ch2)) || Number(p.fav2) === 1;
+    const hasC = id !== 'fx2' &&
+                 (chOK(Number(p.ch3)) || Number(p.fav3) === 1);
     const tierLabel = (s) => {
       if (hasC) return s === 0 ? 'CURTO' : s === 1 ? 'LONGO' : 'RECLICK';
       if (hasB) return s === 0 ? 'CURTO' : 'LONGO';
       return '';
     };
     const suf = section === 0 ? '' : section === 1 ? '2' : '3';
+    // FAVORITE: a secao carrega banco/preset em vez de mandar CC.
+    if (Number(p['fav' + suf]) === 1) {
+      const bankLetters = ['A', 'B', 'C', 'D', 'E'];
+      const fb = clamp(Number(p['fav_bank' + suf]) || 0, 0, 4);
+      const fp = clamp(Number(p['fav_preset' + suf]) || 1, 1, 30);
+      const fm = Number(p['fav_mode' + suf]) === 1 ? 'LIVE' : 'PRESET';
+      return {
+        sw, modeLabel: 'STOMP',
+        sectionLabel: tierLabel(section),
+        on: null,
+        messages: [{
+          kind: 'fav',
+          bank: bankLetters[fb] || 'A',
+          preset: fp,
+          mode: fm,
+        }],
+      };
+    }
     const ch = Number(p['ch' + suf]);
     if (!chOK(ch)) return null;
     const custom = Number(p['custom' + suf]) === 1;
@@ -1668,15 +1875,27 @@ function buildLivePressEvent(sw, section, nowOn, savedSwModes, savedSwParams) {
 
   if (id === 'momentary' && section === 0) {
     const p = { ...DEFAULT_SW_PARAMS('momentary'), ...(userParams || {}) };
-    if (!(Number(p.ch) >= 1 && Number(p.ch) <= 16)) return null;
-    const onV = p.custom === 1 ? Number(p.on) : 127;
-    const offV = p.custom === 1 ? Number(p.off) : 0;
+    const slotsFromMom = parseMomSlots(p.mom_slots || '');
+    const momHasAny = slotsFromMom.some((s) => s.ch >= 1 && s.ch <= 16);
+    const slots = slotsFromMom.slice();
+    if (!momHasAny && Number(p.ch) >= 1 && Number(p.ch) <= 16) {
+      slots[0] = {
+        ch: Number(p.ch),
+        num: Number(p.num) || 0,
+        on: Number(p.custom) === 1 ? (Number(p.on) || 127) : 127,
+        off: Number(p.custom) === 1 ? (Number(p.off) || 0) : 0,
+      };
+    }
+    const active = slots.filter((s) => s.ch >= 1 && s.ch <= 16);
+    if (active.length === 0) return null;
+    const messages = [];
+    for (const s of active) {
+      messages.push(ccMsg(s.ch, s.num, s.on));
+      messages.push(ccMsg(s.ch, s.num, s.off));
+    }
     return {
       sw, modeLabel: 'MOMENTARY', sectionLabel: '', on: null,
-      messages: [
-        ccMsg(p.ch, p.num, onV),
-        ccMsg(p.ch, p.num, offV),
-      ],
+      messages,
     };
   }
 
@@ -1705,18 +1924,82 @@ function buildLivePressEvent(sw, section, nowOn, savedSwModes, savedSwParams) {
     };
   }
 
-  if (id === 'tap_tempo' && section === 0) {
+  if (id === 'tap_tempo') {
     const p = { ...DEFAULT_SW_PARAMS('tap_tempo'), ...(userParams || {}) };
-    const slots = parseTapSlots(p.tslots || '');
-    const messages = [];
-    for (const s of slots) {
-      if (s.ch < 1 || s.ch > 16) continue;
-      messages.push(ccMsg(s.ch, s.num, 127));
-      if (s.mode === 2) messages.push(ccMsg(s.ch, s.num, 0));
+    if (section === 0) {
+      const slots = parseTapSlots(p.tslots || '');
+      const messages = [];
+      for (const s of slots) {
+        if (s.ch < 1 || s.ch > 16) continue;
+        messages.push(ccMsg(s.ch, s.num, 127));
+        if (s.mode === 2) messages.push(ccMsg(s.ch, s.num, 0));
+      }
+      return {
+        sw, modeLabel: 'TAP TEMPO', sectionLabel: 'TAP', on: null,
+        messages,
+      };
     }
+    if (section === 1) {
+      const lpCh = Number(p.lp_ch) || 0;
+      if (lpCh < 1 || lpCh > 16) return null;
+      const lpNum = Number(p.lp_num) || 0;
+      const lpOn = typeof p.lp_on !== 'undefined' ? Number(p.lp_on) : 127;
+      const lpOff = Number(p.lp_off) || 0;
+      const val = nowOn ? lpOn : lpOff;
+      return {
+        sw, modeLabel: 'TAP TEMPO', sectionLabel: 'LONG PRESS', on: nowOn,
+        messages: [ccMsg(lpCh, lpNum, val)],
+      };
+    }
+    return null;
+  }
+
+  if (id === 'spin' && section === 0) {
+    // SPIN — nowOn carrega o stateIndex (0/1/2). Cada estado dispara
+    // TODOS os slots configurados (ate 3 CCs simultaneos).
+    const p = { ...DEFAULT_SW_PARAMS('spin'), ...(userParams || {}) };
+    const stIdx = typeof nowOn === 'number' ? clamp(nowOn, 0, 2) : 0;
+    const vKey = stIdx === 0 ? 'v1' : stIdx === 1 ? 'v2' : 'v3';
+    const parsed = parseSpinSlots(p.spin_slots || '');
+    const hasAny = parsed.some((s) => s.ch >= 1 && s.ch <= 16);
+    const slots = parsed.slice();
+    if (!hasAny && Number(p.ch) >= 1 && Number(p.ch) <= 16) {
+      slots[0] = {
+        ch: Number(p.ch), num: Number(p.num) || 0,
+        v1: Number(p.val1) || 0,
+        v2: typeof p.val2 !== 'undefined' ? Number(p.val2) : 64,
+        v3: typeof p.val3 !== 'undefined' ? Number(p.val3) : 127,
+      };
+    }
+    const active = slots.filter((s) => s.ch >= 1 && s.ch <= 16);
+    if (active.length === 0) return null;
     return {
-      sw, modeLabel: 'TAP TEMPO', sectionLabel: '', on: null,
-      messages,
+      sw, modeLabel: 'SPIN',
+      sectionLabel: 'PIXEL ' + (stIdx + 1),
+      on: null,
+      messages: active.map((s) => ccMsg(s.ch, s.num, s[vKey] || 0)),
+    };
+  }
+
+  if (id === 'ramp' && section === 0) {
+    // RAMP — usa liveOn[i] como toggle (direcao do sweep). Cada press
+    // flipa, e o evento mostra o valor extremo daquela direcao. O sweep
+    // continuo acontece no device — o monitor so loga o gatilho.
+    const p = { ...DEFAULT_SW_PARAMS('ramp'), ...(userParams || {}) };
+    const ch = Number(p.ch) || 0;
+    if (ch < 1 || ch > 16) return null;
+    const num = Number(p.num) || 0;
+    const target = nowOn
+      ? (typeof p.max_val !== 'undefined' ? Number(p.max_val) : 127)
+      : Number(p.min_val) || 0;
+    const curveLabels = ['LINEAR', 'EXP', 'LOG', 'SINE'];
+    const dur = nowOn ? (Number(p.up_ms) || 1000) : (Number(p.down_ms) || 1000);
+    return {
+      sw, modeLabel: 'RAMP',
+      sectionLabel: (nowOn ? '↑ ' : '↓ ') + (curveLabels[Number(p.curve) || 0]
+        || 'LINEAR') + ` (${dur}ms)`,
+      on: nowOn,
+      messages: [ccMsg(ch, num, target)],
     };
   }
 
@@ -1993,7 +2276,8 @@ function SwFx1EditorLegacy({ sw, params, onChange, ledPreviewLive, liveOn }) {
 // prefixamos as chaves. `litArcsOn` define quais arcos do FootswitchArc
 // acendem quando testOn (mapeamento do pixel no firmware).
 function SwStompSection({ sw, section, label, litArcsOn,
-                          params, onChange, ledPreviewLive, liveOn }) {
+                          params, onChange, ledPreviewLive, liveOn,
+                          presetCount }) {
   const suf = section === 0 ? '' : section === 1 ? '2' : '3';
   const k = (base) => base + suf;
   const num = params[k('num')];
@@ -2003,6 +2287,12 @@ function SwStompSection({ sw, section, label, litArcsOn,
   const start = params[k('start')];
   const color = params[k('color')];
   const isCustom = params[k('custom')] === 1;
+  const isFav = Number(params[k('fav')]) === 1;
+  const favBank = clamp(Number(params[k('fav_bank')]) || 0, 0, 4);
+  const favPreset = clamp(Number(params[k('fav_preset')]) || 1, 1,
+                          presetCount || 6);
+  const favMode = Number(params[k('fav_mode')]) === 1 ? 1 : 0;
+  const bankLetters = ['A', 'B', 'C', 'D', 'E'];
   // at_preset: dispara MIDI na chamada do preset? Default 1 quando
   // ausente (dados antigos do STOMP, que sempre disparavam).
   const atPreset = (typeof params[k('at_preset')] !== 'undefined')
@@ -2043,74 +2333,122 @@ function SwStompSection({ sw, section, label, litArcsOn,
   return (
     <div className="bf-sw-fx1">
       {label && <div className="bf-section-label">{label}</div>}
-      <div className="bf-extras-row">
-        <label className="bf-extras-cell">
-          <span className="bf-field-label">CC</span>
-          <div className="bf-select-wrap">
-            <select
-              className="bf-input bf-select"
-              value={num}
-              onChange={(e) => onChange({ [k('num')]: clamp(Number(e.target.value), 0, 127) })}
-              aria-label="Numero do CC"
-            >
-              {numOptions.map((n) => <option key={n} value={n}>{n}</option>)}
-            </select>
-            <span className="bf-select-chev">▾</span>
+      {isFav ? (
+        // ─── FAVORITE MODE — substitui os campos MIDI por um seletor
+        // visual de banco/preset/modo no mesmo estilo da pagina GLOBAL
+        // (.bf-seg pro toggle BANK/LIVE + .bf-cycle pros cards grandes).
+        // Ao pisar o SW, o firmware carrega esse preset, opcionalmente
+        // entrando em LIVE MODE.
+        <div className="bf-fav-picker">
+          <div className="bf-seg">
+            <button
+              type="button"
+              className={favMode === 0 ? 'is-active' : ''}
+              onClick={() => onChange({ [k('fav_mode')]: 0 })}
+              aria-pressed={favMode === 0}
+              title="Carrega o preset entrando em PRESET MODE"
+            >BANK</button>
+            <button
+              type="button"
+              className={favMode === 1 ? 'is-active' : ''}
+              onClick={() => onChange({ [k('fav_mode')]: 1 })}
+              aria-pressed={favMode === 1}
+              title="Carrega o preset entrando em LIVE MODE"
+            >LIVE</button>
           </div>
-        </label>
-        <label className="bf-extras-cell">
-          <span className="bf-field-label">Canal</span>
-          <div className="bf-select-wrap">
-            <select
-              className={'bf-input bf-select' + (ch === 0 ? ' is-mute' : '')}
-              value={ch}
-              onChange={(e) => onChange({ [k('ch')]: Number(e.target.value) })}
-              aria-label="Canal MIDI"
+          <div className="bf-cycle">
+            <button
+              type="button"
+              className="is-on"
+              onClick={() => onChange({ [k('fav_bank')]: (favBank + 1) % 5 })}
+              aria-label={'Banco alvo: ' + bankLetters[favBank]}
+              title="Toque pra ciclar A → B → C → D → E"
             >
-              <option value={0}>OFF</option>
-              {Array.from({ length: 16 }, (_, i) => i + 1).map((n) => (
-                <option key={n} value={n}>{n}</option>
-              ))}
-            </select>
-            <span className="bf-select-chev">▾</span>
+              <span className="cap">BANK</span>{bankLetters[favBank]}
+            </button>
+            <button
+              type="button"
+              className="is-on"
+              onClick={() => onChange({ [k('fav_preset')]: (favPreset % (presetCount || 6)) + 1 })}
+              aria-label={'Preset alvo: ' + favPreset}
+              title="Toque pra ciclar"
+            >
+              <span className="cap">PRESET</span>{favPreset}
+            </button>
           </div>
-        </label>
-      </div>
-      <div className="bf-extras-row">
-        <button
-          type="button"
-          className={'bf-input bf-input-num' + (isCustom ? ' is-active' : '')}
-          onClick={() => onChange({ [k('custom')]: isCustom ? 0 : 1 })}
-          aria-pressed={isCustom}
-          aria-label={`Custom: ${isCustom ? 'ligado' : 'desligado'}`}
-          title="Liga valores ON/OFF proprios"
-        >
-          CUSTOM
-        </button>
-        <button
-          type="button"
-          className={'bf-input bf-input-num' + (start === 1 ? ' is-active' : '')}
-          onClick={() => onChange({ [k('start')]: start === 1 ? 0 : 1 })}
-          aria-pressed={start === 1}
-          aria-label={`Estado inicial: ${start === 1 ? 'ligado' : 'desligado'}`}
-        >
-          {start === 1 ? 'START ON' : 'START OFF'}
-        </button>
-      </div>
-      <div className="bf-extras-row bf-extras-row-full">
-        <button
-          type="button"
-          className={'bf-input bf-input-num' + (atPreset ? ' is-active' : '')}
-          onClick={() => onChange({ [k('at_preset')]: atPreset ? 0 : 1 })}
-          aria-pressed={atPreset}
-          title={atPreset
-            ? 'START ON PRESET — dispara o CC na chamada do preset (LED reflete o estado inicial em LIVE)'
-            : 'WAITING LIVE MODE — nao dispara na chamada do preset; estado inicial e fixado em silencio'}
-        >
-          {atPreset ? 'START ON PRESET' : 'WAITING LIVE MODE'}
-        </button>
-      </div>
-      {isCustom && (
+        </div>
+      ) : (
+        <>
+          <div className="bf-extras-row">
+            <label className="bf-extras-cell">
+              <span className="bf-field-label">CC</span>
+              <div className="bf-select-wrap">
+                <select
+                  className="bf-input bf-select"
+                  value={num}
+                  onChange={(e) => onChange({ [k('num')]: clamp(Number(e.target.value), 0, 127) })}
+                  aria-label="Numero do CC"
+                >
+                  {numOptions.map((n) => <option key={n} value={n}>{n}</option>)}
+                </select>
+                <span className="bf-select-chev">▾</span>
+              </div>
+            </label>
+            <label className="bf-extras-cell">
+              <span className="bf-field-label">Canal</span>
+              <div className="bf-select-wrap">
+                <select
+                  className={'bf-input bf-select' + (ch === 0 ? ' is-mute' : '')}
+                  value={ch}
+                  onChange={(e) => onChange({ [k('ch')]: Number(e.target.value) })}
+                  aria-label="Canal MIDI"
+                >
+                  <option value={0}>OFF</option>
+                  {Array.from({ length: 16 }, (_, i) => i + 1).map((n) => (
+                    <option key={n} value={n}>{n}</option>
+                  ))}
+                </select>
+                <span className="bf-select-chev">▾</span>
+              </div>
+            </label>
+          </div>
+          <div className="bf-extras-row">
+            <button
+              type="button"
+              className={'bf-input bf-input-num' + (isCustom ? ' is-active' : '')}
+              onClick={() => onChange({ [k('custom')]: isCustom ? 0 : 1 })}
+              aria-pressed={isCustom}
+              aria-label={`Custom: ${isCustom ? 'ligado' : 'desligado'}`}
+              title="Liga valores ON/OFF proprios"
+            >
+              CUSTOM
+            </button>
+            <button
+              type="button"
+              className={'bf-input bf-input-num' + (start === 1 ? ' is-active' : '')}
+              onClick={() => onChange({ [k('start')]: start === 1 ? 0 : 1 })}
+              aria-pressed={start === 1}
+              aria-label={`Estado inicial: ${start === 1 ? 'ligado' : 'desligado'}`}
+            >
+              {start === 1 ? 'START ON' : 'START OFF'}
+            </button>
+          </div>
+          <div className="bf-extras-row bf-extras-row-full">
+            <button
+              type="button"
+              className={'bf-input bf-input-num' + (atPreset ? ' is-active' : '')}
+              onClick={() => onChange({ [k('at_preset')]: atPreset ? 0 : 1 })}
+              aria-pressed={atPreset}
+              title={atPreset
+                ? 'START ON PRESET — dispara o CC na chamada do preset (LED reflete o estado inicial em LIVE)'
+                : 'WAITING LIVE MODE — nao dispara na chamada do preset; estado inicial e fixado em silencio'}
+            >
+              {atPreset ? 'START ON PRESET' : 'WAITING LIVE MODE'}
+            </button>
+          </div>
+        </>
+      )}
+      {!isFav && isCustom && (
         <div className="bf-extras-row">
           <label className="bf-extras-cell">
             <span className="bf-field-label">Valor On</span>
@@ -2142,15 +2480,32 @@ function SwStompSection({ sw, section, label, litArcsOn,
           </label>
         </div>
       )}
-      <div className="bf-extras-row bf-sw-fx1-test">
+      <div className="bf-extras-row bf-sw-fx1-test bf-stomp-test-row">
+        {!isFav && (
+          <button
+            type="button"
+            className={'bf-input bf-input-num' + (testOn ? ' is-active' : '')}
+            onClick={midiTest}
+            aria-pressed={testOn}
+            aria-label="MIDI TEST — dispara o CC do STOMP e alterna on/off"
+          >
+            MIDI TEST
+          </button>
+        )}
         <button
           type="button"
-          className={'bf-input bf-input-num' + (testOn ? ' is-active' : '')}
-          onClick={midiTest}
-          aria-pressed={testOn}
-          aria-label="MIDI TEST — dispara o CC do STOMP e alterna on/off"
+          className={'bf-input bf-input-num bf-fav-btn' +
+                     (isFav ? ' is-active' : '')}
+          onClick={() => onChange({ [k('fav')]: isFav ? 0 : 1 })}
+          aria-pressed={isFav}
+          title={isFav
+            ? 'FAVORITE ligado — ao pisar o SW carrega o preset escolhido'
+            : 'FAVORITE — pisar carrega banco/preset/modo em vez de mandar CC'}
         >
-          MIDI TEST
+          <svg viewBox="0 0 24 24" className="bf-fav-ico" aria-hidden="true">
+            <path d="M12 2.5 L14.7 9 L21.5 9.6 L16.3 14.2 L17.9 21 L12 17.3 L6.1 21 L7.7 14.2 L2.5 9.6 L9.3 9 Z" />
+          </svg>
+          FAVORITE
         </button>
         <div className={'bf-sw-fx1-led' + (ledDimmed ? ' is-off' : '')}>
           <FootswitchArc
@@ -2171,7 +2526,7 @@ function SwStompSection({ sw, section, label, litArcsOn,
 // B, chaves com sufixo 2). Pra nao alongar demais o card, mostra so uma
 // secao por vez — um toggle segmentado CLICK CURTO / CLICK LONGO alterna
 // qual secao esta visivel. Edicao local — persistencia no SAVE do rodape.
-function SwFx2Editor({ sw, params, onChange, ledPreviewLive, liveOn }) {
+function SwFx2Editor({ sw, params, onChange, ledPreviewLive, liveOn, presetCount }) {
   const [activeSection, setActiveSection] = useState(0);
   // Mapeamento pixel -> arco do FootswitchArc:
   //   pixel 1 e 3 (firmware) = arcos superiores esquerdo (1) e direito (2)
@@ -2205,6 +2560,7 @@ function SwFx2Editor({ sw, params, onChange, ledPreviewLive, liveOn }) {
         params={params} onChange={onChange}
         ledPreviewLive={ledPreviewLive}
         liveOn={liveBySection[activeSection]}
+        presetCount={presetCount}
       />
     </div>
   );
@@ -2219,14 +2575,16 @@ function SwFx2Editor({ sw, params, onChange, ledPreviewLive, liveOn }) {
 //   A + B + C -> TRIAL STOMP (pixel 1 = A, pixel 2 = B, pixel 3 = C).
 // Pixel -> arco no FootswitchArc: 0 = inferior, 1 = sup esq, 2 = sup dir.
 // Tambem serve o legado fx3 (mesmas chaves).
-function SwStompEditor({ sw, params, onChange, ledPreviewLive, liveOn }) {
+function SwStompEditor({ sw, params, onChange, ledPreviewLive, liveOn, presetCount }) {
   const [activeSection, setActiveSection] = useState(0);
   const chOK = (v) => {
     const n = Number(v);
     return n >= 1 && n <= 16;
   };
-  const hasB = chOK(params.ch2);
-  const hasC = chOK(params.ch3);
+  // Secao "esta ativa" se tem canal valido OU se esta como FAVORITE
+  // (FAVORITE ignora os campos de CC e despacha carregamento de preset).
+  const hasB = chOK(params.ch2) || Number(params.fav2) === 1;
+  const hasC = chOK(params.ch3) || Number(params.fav3) === 1;
   // Preview do LED adapta o mapeamento pixel -> arco conforme o tier.
   const litArcsBySection = hasC
     ? [[1], [0], [2]]            // tier 3: 1 arco por secao
@@ -2259,6 +2617,7 @@ function SwStompEditor({ sw, params, onChange, ledPreviewLive, liveOn }) {
         params={params} onChange={onChange}
         ledPreviewLive={ledPreviewLive}
         liveOn={liveBySection[activeSection]}
+        presetCount={presetCount}
       />
     </div>
   );
@@ -2386,6 +2745,7 @@ function SwMacrosSlot({ idx, slot, onChange }) {
 
 // MACROS — uma secao (CLICK CURTO / CLICK LONGO / RECLICK). 4 slots +
 // botao START (dispara com preset) + LED color + botao FIRE de teste.
+const MACROS_MAX_SLOTS = 4;
 function SwMacrosSection({ sw, section, label, litArcsOn,
                           params, onChange, ledPreviewLive, liveOn }) {
   const suf = section === 0 ? '' : section === 1 ? '2' : '3';
@@ -2394,6 +2754,15 @@ function SwMacrosSection({ sw, section, label, litArcsOn,
   const atPreset = params[k('at_preset')] === 1;
   const startOn = params[k('start')] === 1;
   const colorVal = params[k('color')];
+
+  // Quantos slots ja tem dado (canal valido) — pelo menos 1 sempre visivel.
+  const configuredCount = slots.filter((s) => s.ch >= 1 && s.ch <= 16).length;
+  const minVisible = Math.max(1, configuredCount);
+  const [visibleCount, setVisibleCount] = useState(
+    Math.min(MACROS_MAX_SLOTS, minVisible));
+  useEffect(() => {
+    setVisibleCount((v) => Math.min(MACROS_MAX_SLOTS, Math.max(v, minVisible)));
+  }, [minVisible]);
 
   const updateSlot = (idx, patch) => {
     const next = slots.map((s, i) => i === idx ? { ...s, ...patch } : s);
@@ -2436,10 +2805,40 @@ function SwMacrosSection({ sw, section, label, litArcsOn,
   return (
     <div className="bf-sw-fx1 bf-sw-macros">
       {label && <div className="bf-section-label">{label}</div>}
-      {slots.map((s, i) => (
+      {slots.slice(0, visibleCount).map((s, i) => (
         <SwMacrosSlot key={i} idx={i} slot={s}
           onChange={(patch) => updateSlot(i, patch)} />
       ))}
+      {(visibleCount > 1 || visibleCount < MACROS_MAX_SLOTS) && (
+        <div className="bf-tap-slot-actions">
+          {visibleCount > 1 && (
+            <button
+              type="button"
+              className="bf-tap-action bf-tap-action-remove"
+              onClick={() => {
+                const last = visibleCount - 1;
+                const cur = slots[last];
+                if (cur && (cur.ch !== 0 || cur.num !== 0 ||
+                            cur.on !== 127 || cur.off !== 0 || cur.t !== 0)) {
+                  updateSlot(last, emptyMslot());
+                }
+                setVisibleCount(visibleCount - 1);
+              }}
+              aria-label="Remover ultimo slot"
+              title="Remover ultimo slot"
+            >REMOVE SLOT</button>
+          )}
+          {visibleCount < MACROS_MAX_SLOTS && (
+            <button
+              type="button"
+              className="bf-tap-action bf-tap-action-add"
+              onClick={() => setVisibleCount(visibleCount + 1)}
+              aria-label="Adicionar mais um slot"
+              title="Adicionar mais um slot"
+            >ADD SLOT</button>
+          )}
+        </div>
+      )}
       <div className="bf-extras-row">
         <button
           type="button"
@@ -2542,16 +2941,183 @@ function SwMacrosEditor({ sw, params, onChange, ledPreviewLive, liveOn }) {
 // mantem liveOn pra momentary). O MIDI TEST aqui ainda alterna em
 // dois cliques (heranca do SwStompSection) — pra um pulse de teste
 // rapido, basta clicar duas vezes seguido.
-function SwMomentaryEditor({ sw, params, onChange, ledPreviewLive }) {
+// MOMENTARY — um slot do editor. Cada slot pulsa CC com par ON/OFF.
+function SwMomentarySlot({ idx, slot, onChange }) {
+  const numOptions = Array.from({ length: 128 }, (_, n) => n);
   return (
-    <div className="bf-sw-fx2">
-      <SwStompSection
-        sw={sw} section={0}
-        litArcsOn={[0, 1, 2]}
-        params={params} onChange={onChange}
-        ledPreviewLive={ledPreviewLive}
-        liveOn={undefined}
-      />
+    <div className="bf-macros-slot bf-tap-slot">
+      <div className="bf-extras-row bf-tap-slot-row bf-mom-slot-row">
+        <span className="bf-macros-slot-idx">{idx + 1}</span>
+        <label className="bf-extras-cell">
+          <span className="bf-field-label">CC</span>
+          <div className="bf-select-wrap">
+            <select
+              className="bf-input bf-select"
+              value={slot.num}
+              onChange={(e) => onChange({ num: clamp(Number(e.target.value), 0, 127) })}
+              aria-label="Numero do CC"
+            >
+              {numOptions.map((n) => <option key={n} value={n}>{n}</option>)}
+            </select>
+            <span className="bf-select-chev">▾</span>
+          </div>
+        </label>
+        <label className="bf-extras-cell">
+          <span className="bf-field-label">ON</span>
+          <div className="bf-select-wrap">
+            <select
+              className="bf-input bf-select"
+              value={slot.on}
+              onChange={(e) => onChange({ on: clamp(Number(e.target.value), 0, 127) })}
+              aria-label="Valor enviado no pulse ON"
+            >
+              {numOptions.map((n) => <option key={n} value={n}>{n}</option>)}
+            </select>
+            <span className="bf-select-chev">▾</span>
+          </div>
+        </label>
+        <label className="bf-extras-cell">
+          <span className="bf-field-label">OFF</span>
+          <div className="bf-select-wrap">
+            <select
+              className="bf-input bf-select"
+              value={slot.off}
+              onChange={(e) => onChange({ off: clamp(Number(e.target.value), 0, 127) })}
+              aria-label="Valor enviado no pulse OFF"
+            >
+              {numOptions.map((n) => <option key={n} value={n}>{n}</option>)}
+            </select>
+            <span className="bf-select-chev">▾</span>
+          </div>
+        </label>
+        <label className="bf-extras-cell">
+          <span className="bf-field-label">Canal</span>
+          <div className="bf-select-wrap">
+            <select
+              className={'bf-input bf-select' + (slot.ch === 0 ? ' is-mute' : '')}
+              value={slot.ch}
+              onChange={(e) => onChange({ ch: Number(e.target.value) })}
+              aria-label="Canal MIDI do slot"
+            >
+              <option value={0}>OFF</option>
+              {Array.from({ length: 16 }, (_, i) => i + 1).map((n) => (
+                <option key={n} value={n}>{n}</option>
+              ))}
+            </select>
+            <span className="bf-select-chev">▾</span>
+          </div>
+        </label>
+      </div>
+    </div>
+  );
+}
+
+// MOMENTARY — editor com ate 4 slots em `mom_slots`. Cada press do SW
+// dispara TODOS os slots como pulse (ON, delay, OFF). Sem estado
+// persistente. Migracao automatica: dados legados (campos `ch`/`num`/
+// `on`/`off` soltos) sao mostrados como slot 1 ate o user salvar.
+function SwMomentaryEditor({ sw, params, onChange, ledPreviewLive }) {
+  const slotsFromMom = parseMomSlots(params.mom_slots || '');
+  const momHasAny = slotsFromMom.some((s) => s.ch >= 1 && s.ch <= 16);
+  const slots = slotsFromMom.slice();
+  // Fallback legado: se mom_slots vazio e ha ch/num soltos, vira slot 1.
+  if (!momHasAny && Number(params.ch) >= 1 && Number(params.ch) <= 16) {
+    slots[0] = {
+      ch: Number(params.ch),
+      num: Number(params.num) || 0,
+      on: Number(params.custom) === 1 ? (Number(params.on) || 127) : 127,
+      off: Number(params.custom) === 1 ? (Number(params.off) || 0) : 0,
+    };
+  }
+  const configuredCount = slots.filter((s) => s.ch >= 1 && s.ch <= 16).length;
+  const minVisible = Math.max(1, configuredCount);
+  const [visibleCount, setVisibleCount] = useState(
+    Math.min(MOM_MAX_SLOTS, minVisible));
+  useEffect(() => {
+    setVisibleCount((v) => Math.min(MOM_MAX_SLOTS, Math.max(v, minVisible)));
+  }, [minVisible]);
+
+  const updateSlot = (idx, patch) => {
+    const next = slots.map((s, i) => i === idx ? { ...s, ...patch } : s);
+    onChange({ mom_slots: serializeMomSlots(next) });
+  };
+
+  const [testFired, setTestFired] = useState(false);
+  const firePulse = async () => {
+    setTestFired(true);
+    setTimeout(() => setTestFired(false), 200);
+    for (const s of slots) {
+      if (s.ch < 1 || s.ch > 16) continue;
+      const onBody = new URLSearchParams();
+      onBody.set('ch', String(s.ch));
+      onBody.set('as_pc', '0');
+      onBody.set('cc', String(s.num));
+      onBody.set('value', String(s.on));
+      try { await apiCall('POST', '/midi/cc', onBody); } catch {/* preview */}
+      const offBody = new URLSearchParams();
+      offBody.set('ch', String(s.ch));
+      offBody.set('as_pc', '0');
+      offBody.set('cc', String(s.num));
+      offBody.set('value', String(s.off));
+      try { await apiCall('POST', '/midi/cc', offBody); } catch {/* preview */}
+    }
+  };
+
+  return (
+    <div className="bf-sw-fx1 bf-sw-macros bf-sw-single bf-sw-tap">
+      {slots.slice(0, visibleCount).map((s, i) => (
+        <SwMomentarySlot key={i} idx={i} slot={s}
+          onChange={(patch) => updateSlot(i, patch)} />
+      ))}
+      <div className="bf-extras-row bf-sw-fx1-test">
+        <button
+          type="button"
+          className={'bf-input bf-input-num' + (testFired ? ' is-active' : '')}
+          onClick={firePulse}
+          aria-label="PULSE — simula um press (manda ON+OFF de todos os slots)"
+        >
+          PULSE
+        </button>
+        <div className="bf-sw-fx1-led">
+          <FootswitchArc
+            label="LED"
+            colorId={params.color}
+            onChange={(id) => onChange({ color: id })}
+            litArcs={testFired ? [0, 1, 2] : []}
+            labelInside
+          />
+        </div>
+      </div>
+      {(visibleCount > 1 || visibleCount < MOM_MAX_SLOTS) && (
+        <div className="bf-tap-slot-actions">
+          {visibleCount > 1 && (
+            <button
+              type="button"
+              className="bf-tap-action bf-tap-action-remove"
+              onClick={() => {
+                const last = visibleCount - 1;
+                const cur = slots[last];
+                if (cur && (cur.ch !== 0 || cur.num !== 0 ||
+                            cur.on !== 127 || cur.off !== 0)) {
+                  updateSlot(last, emptyMomSlot());
+                }
+                setVisibleCount(visibleCount - 1);
+              }}
+              aria-label="Remover ultimo slot"
+              title="Remover ultimo slot"
+            >REMOVE SLOT</button>
+          )}
+          {visibleCount < MOM_MAX_SLOTS && (
+            <button
+              type="button"
+              className="bf-tap-action bf-tap-action-add"
+              onClick={() => setVisibleCount(visibleCount + 1)}
+              aria-label="Adicionar mais um slot"
+              title="Adicionar mais um slot"
+            >ADD SLOT</button>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -2611,6 +3177,385 @@ function SwTapTempoSlot({ idx, slot, onChange }) {
   );
 }
 
+// ─── SPIN ─────────────────────────────────────────────────────────
+// Barra horizontal estilo meter — gradient laranja no preenchimento,
+// fundo escuro com marcas de tick, porcentagem no centro. Largura
+// segue o pai (mesma proporcao do campo de valor).
+function SpinBar({ value }) {
+  const v = Math.max(0, Math.min(127, Number(value) || 0));
+  const pct = Math.round((v / 127) * 100);
+  return (
+    <div className="bf-spin-bar" role="img" aria-label={`${pct}%`}>
+      <div className="bf-spin-bar-fill" style={{ width: pct + '%' }} />
+      <div className="bf-spin-bar-ticks" aria-hidden="true">
+        {Array.from({ length: 21 }, (_, i) => (
+          <span key={i} className={'bf-spin-bar-tick' +
+                                   (i % 5 === 0 ? ' is-major' : '')} />
+        ))}
+      </div>
+      <span className="bf-spin-bar-text">{pct}%</span>
+    </div>
+  );
+}
+
+// Editor do modo SPIN. Um CC com 3 valores fixos; cada press cicla
+// estado 1 -> 2 -> 3 -> 1, com o pixel correspondente aceso. Quando
+// at_preset=ON, o preset call entra em estado 1 (val1 disparado).
+// Quando at_preset=OFF, fica em "awaiting" (pixel 1 piscando) ate o
+// primeiro press, que entao firma val1.
+function SwSpinEditor({ sw, params, onChange, ledPreviewLive }) {
+  const p = { ...DEFAULT_SW_PARAMS('spin'), ...(params || {}) };
+  const numOptions = Array.from({ length: 128 }, (_, n) => n);
+
+  // Carrega os 3 slots; se spin_slots vazio mas ha campos legados (ch/
+  // num/val1/val2/val3 soltos), vira slot 1 pro user reaproveitar.
+  const parsedSlots = parseSpinSlots(p.spin_slots || '');
+  const slotsHasAny = parsedSlots.some((s) => s.ch >= 1 && s.ch <= 16);
+  const slots = parsedSlots.slice();
+  if (!slotsHasAny && Number(p.ch) >= 1 && Number(p.ch) <= 16) {
+    slots[0] = {
+      ch: Number(p.ch),
+      num: Number(p.num) || 0,
+      v1: Number(p.val1) || 0,
+      v2: typeof p.val2 !== 'undefined' ? Number(p.val2) : 64,
+      v3: typeof p.val3 !== 'undefined' ? Number(p.val3) : 127,
+    };
+  }
+
+  const [activeSlot, setActiveSlot] = useState(0);
+  const updateSlot = (idx, patch) => {
+    const next = slots.map((s, i) => i === idx ? { ...s, ...patch } : s);
+    onChange({ spin_slots: serializeSpinSlots(next) });
+  };
+  const slot = slots[activeSlot] || emptySpinSlot();
+
+  const [testStage, setTestStage] = useState(0);
+  const fireTest = async () => {
+    const next = (testStage + 1) % 3;
+    setTestStage(next);
+    const vKey = next === 0 ? 'v1' : next === 1 ? 'v2' : 'v3';
+    // Dispara TODOS os slots simultaneamente (com canal valido).
+    for (const s of slots) {
+      if (s.ch < 1 || s.ch > 16) continue;
+      const body = new URLSearchParams();
+      body.set('ch', String(s.ch));
+      body.set('as_pc', '0');
+      body.set('cc', String(s.num));
+      body.set('value', String(s[vKey] || 0));
+      try { await apiCall('POST', '/midi/cc', body); } catch {/* preview */}
+    }
+  };
+  const stateToArc = [1, 0, 2];
+  const litArcs = [stateToArc[testStage] ?? 1];
+
+  // Marca tabs com bullet quando o slot tem canal valido.
+  const slotConfigured = (idx) =>
+    slots[idx] && slots[idx].ch >= 1 && slots[idx].ch <= 16;
+
+  return (
+    <div className="bf-sw-fx1 bf-sw-spin">
+      {/* Tabs SLOT 1 / SLOT 2 / SLOT 3 — disparados SIMULTANEAMENTE
+          em cada press. Bullet "•" indica slot com canal configurado. */}
+      <div className="bf-seg bf-sw-fx2-tabs" role="tablist"
+           aria-label="Slot do SPIN">
+        {[0, 1, 2].map((idx) => (
+          <button key={idx}
+            type="button"
+            role="tab"
+            aria-selected={activeSlot === idx}
+            className={activeSlot === idx ? 'is-active' : ''}
+            onClick={() => setActiveSlot(idx)}
+          >SLOT {idx + 1}{slotConfigured(idx) ? ' •' : ''}</button>
+        ))}
+      </div>
+
+      {/* CC + Canal do slot ativo */}
+      <div className="bf-extras-row">
+        <label className="bf-extras-cell">
+          <span className="bf-field-label">CC</span>
+          <div className="bf-select-wrap">
+            <select className="bf-input bf-select" value={slot.num}
+                    onChange={(e) => updateSlot(activeSlot, { num: clamp(Number(e.target.value), 0, 127) })}
+                    aria-label="Numero do CC do slot">
+              {numOptions.map((n) => <option key={n} value={n}>{n}</option>)}
+            </select>
+            <span className="bf-select-chev">▾</span>
+          </div>
+        </label>
+        <label className="bf-extras-cell">
+          <span className="bf-field-label">Canal</span>
+          <div className="bf-select-wrap">
+            <select className={'bf-input bf-select' + (slot.ch === 0 ? ' is-mute' : '')}
+                    value={slot.ch}
+                    onChange={(e) => updateSlot(activeSlot, { ch: Number(e.target.value) })}
+                    aria-label="Canal MIDI do slot">
+              <option value={0}>OFF</option>
+              {Array.from({ length: 16 }, (_, i) => i + 1).map((n) => (
+                <option key={n} value={n}>{n}</option>
+              ))}
+            </select>
+            <span className="bf-select-chev">▾</span>
+          </div>
+        </label>
+      </div>
+
+      {/* Val 1 / Val 2 / Val 3 do slot ativo */}
+      {[1, 2, 3].map((idx) => {
+        const key = 'v' + idx;
+        const value = Number(slot[key]) || 0;
+        return (
+          <div className="bf-spin-val-row" key={idx}>
+            <span className="bf-field-label">VAL {idx} (pixel {idx})</span>
+            <div className="bf-spin-val-top">
+              <div className="bf-select-wrap">
+                <select className="bf-input bf-select" value={value}
+                        onChange={(e) => updateSlot(activeSlot, { [key]: clamp(Number(e.target.value), 0, 127) })}
+                        aria-label={`Valor enviado quando o estado ${idx} ativar`}>
+                  {numOptions.map((n) => <option key={n} value={n}>{n}</option>)}
+                </select>
+                <span className="bf-select-chev">▾</span>
+              </div>
+              <SpinBar value={value} />
+            </div>
+            <input
+              type="range"
+              className="bf-spin-slider"
+              min={0} max={127} step={1}
+              value={value}
+              onChange={(e) => updateSlot(activeSlot, { [key]: clamp(Number(e.target.value), 0, 127) })}
+              aria-label={`Fader do VAL ${idx}`}
+            />
+          </div>
+        );
+      })}
+
+      {/* AT_PRESET */}
+      <div className="bf-extras-row">
+        <button
+          type="button"
+          className={'bf-input bf-input-num' +
+                     (Number(p.at_preset) === 1 ? ' is-active' : '')}
+          onClick={() => onChange({ at_preset: Number(p.at_preset) === 1 ? 0 : 1 })}
+          aria-pressed={Number(p.at_preset) === 1}
+          title={Number(p.at_preset) === 1
+            ? 'START ON PRESET — entra em estado 1 (val1 enviado, pixel 1 aceso) ao chamar o preset'
+            : 'WAITING LIVE MODE — pixel 1 pisca aguardando; primeiro press firma val1'}
+        >
+          {Number(p.at_preset) === 1 ? 'START ON PRESET' : 'WAITING LIVE MODE'}
+        </button>
+      </div>
+
+      {/* SPIN test + LED */}
+      <div className="bf-extras-row bf-sw-fx1-test">
+        <button
+          type="button"
+          className="bf-input bf-input-num"
+          onClick={fireTest}
+          aria-label="SPIN test — cicla estados 1/2/3 e dispara o valor"
+        >
+          SPIN
+        </button>
+        <div className="bf-sw-fx1-led">
+          <FootswitchArc
+            label="LED"
+            colorId={Number(p.color)}
+            onChange={(id) => onChange({ color: id })}
+            litArcs={litArcs}
+            labelInside
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── RAMP ─────────────────────────────────────────────────────────
+// Editor do modo RAMPA. Sweep gradual de CC entre min/max com curva e
+// tempo configuraveis. Inspirado em controladoras tipo expression
+// volume/wah, Boss FS-1, Strymon MultiSwitch e mapping de expressao
+// do Helix. Slots: 1 (mono — pode-se estender pra multi-secao depois).
+function SwRampEditor({ sw, params, onChange, ledPreviewLive }) {
+  const p = { ...DEFAULT_SW_PARAMS('ramp'), ...(params || {}) };
+  const numOptions = Array.from({ length: 128 }, (_, n) => n);
+  const curves = [
+    { id: 0, label: 'LINEAR' },
+    { id: 1, label: 'EXP' },
+    { id: 2, label: 'LOG' },
+    { id: 3, label: 'SINE' },
+  ];
+  const triggers = [
+    { id: 0, label: 'TOGGLE', sub: 'press flipa direcao' },
+    { id: 1, label: 'HOLD',   sub: 'sobe enquanto segura' },
+    { id: 2, label: 'LOOP',   sub: 'ping-pong continuo' },
+  ];
+
+  const [testFired, setTestFired] = useState(false);
+  const [testDir, setTestDir] = useState(Number(p.start_on) === 1);
+  const fireRamp = async () => {
+    // Preview simples: pisca o LED e manda os 2 extremos (sem animacao).
+    // O dispositivo real faz o sweep continuo.
+    if (Number(p.ch) < 1 || Number(p.ch) > 16) return;
+    setTestFired(true);
+    setTimeout(() => setTestFired(false), 400);
+    const next = !testDir;
+    setTestDir(next);
+    const body = new URLSearchParams();
+    body.set('ch', String(p.ch));
+    body.set('as_pc', '0');
+    body.set('cc', String(p.num));
+    body.set('value', String(next ? p.max_val : p.min_val));
+    try { await apiCall('POST', '/midi/cc', body); } catch {/* preview */}
+  };
+
+  return (
+    <div className="bf-sw-fx1 bf-sw-macros bf-sw-single bf-sw-ramp">
+      {/* Linha 1: CC + Canal */}
+      <div className="bf-extras-row">
+        <label className="bf-extras-cell">
+          <span className="bf-field-label">CC</span>
+          <div className="bf-select-wrap">
+            <select className="bf-input bf-select" value={Number(p.num) || 0}
+                    onChange={(e) => onChange({ num: clamp(Number(e.target.value), 0, 127) })}
+                    aria-label="Numero do CC">
+              {numOptions.map((n) => <option key={n} value={n}>{n}</option>)}
+            </select>
+            <span className="bf-select-chev">▾</span>
+          </div>
+        </label>
+        <label className="bf-extras-cell">
+          <span className="bf-field-label">Canal</span>
+          <div className="bf-select-wrap">
+            <select className={'bf-input bf-select' + (Number(p.ch) === 0 ? ' is-mute' : '')}
+                    value={Number(p.ch) || 0}
+                    onChange={(e) => onChange({ ch: Number(e.target.value) })}
+                    aria-label="Canal MIDI">
+              <option value={0}>OFF</option>
+              {Array.from({ length: 16 }, (_, i) => i + 1).map((n) => (
+                <option key={n} value={n}>{n}</option>
+              ))}
+            </select>
+            <span className="bf-select-chev">▾</span>
+          </div>
+        </label>
+      </div>
+
+      {/* Linha 2: MIN + MAX */}
+      <div className="bf-extras-row">
+        <label className="bf-extras-cell">
+          <span className="bf-field-label">MIN</span>
+          <div className="bf-select-wrap">
+            <select className="bf-input bf-select" value={Number(p.min_val) || 0}
+                    onChange={(e) => onChange({ min_val: clamp(Number(e.target.value), 0, 127) })}
+                    aria-label="Valor minimo do sweep">
+              {numOptions.map((n) => <option key={n} value={n}>{n}</option>)}
+            </select>
+            <span className="bf-select-chev">▾</span>
+          </div>
+        </label>
+        <label className="bf-extras-cell">
+          <span className="bf-field-label">MAX</span>
+          <div className="bf-select-wrap">
+            <select className="bf-input bf-select"
+                    value={typeof p.max_val !== 'undefined' ? Number(p.max_val) : 127}
+                    onChange={(e) => onChange({ max_val: clamp(Number(e.target.value), 0, 127) })}
+                    aria-label="Valor maximo do sweep">
+              {numOptions.map((n) => <option key={n} value={n}>{n}</option>)}
+            </select>
+            <span className="bf-select-chev">▾</span>
+          </div>
+        </label>
+      </div>
+
+      {/* SUBIDA / DESCIDA — input numerico + fader deslizante (100..3000ms).
+          Lado a lado na mesma linha; cada coluna empilha input em cima e
+          fader embaixo. */}
+      <div className="bf-ramp-time-grid">
+        {[
+          { key: 'up_ms',   label: 'SUBIDA (ms)',  ariaIn: 'Tempo de subida em ms',
+            ariaSl: 'Fader do tempo de subida' },
+          { key: 'down_ms', label: 'DESCIDA (ms)', ariaIn: 'Tempo de descida em ms',
+            ariaSl: 'Fader do tempo de descida' },
+        ].map((f) => {
+          const v = clamp(Number(p[f.key]) || 1000, 100, 3000);
+          return (
+            <div className="bf-ramp-time-col" key={f.key}>
+              <label className="bf-extras-cell">
+                <span className="bf-field-label">{f.label}</span>
+                <input type="number" className="bf-input bf-input-num"
+                       min={100} max={3000} step={10} value={v}
+                       onChange={(e) => onChange({ [f.key]: clamp(Number(e.target.value) || 1000, 100, 3000) })}
+                       aria-label={f.ariaIn} />
+              </label>
+              <input
+                type="range"
+                className="bf-spin-slider bf-ramp-time-slider"
+                min={100} max={3000} step={10}
+                value={v}
+                onChange={(e) => onChange({ [f.key]: clamp(Number(e.target.value), 100, 3000) })}
+                aria-label={f.ariaSl}
+              />
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Linha 4: CURVA (botoes segmented) */}
+      <div className="bf-extras-row bf-ramp-segmented">
+        {curves.map((c) => (
+          <button key={c.id} type="button"
+            className={'bf-input bf-input-num' +
+                       (Number(p.curve) === c.id ? ' is-active' : '')}
+            onClick={() => onChange({ curve: c.id })}
+            aria-pressed={Number(p.curve) === c.id}
+            title={'Curva de sweep: ' + c.label}
+          >{c.label}</button>
+        ))}
+      </div>
+
+      {/* Linha 5: TRIGGER MODE */}
+      <div className="bf-extras-row bf-ramp-segmented">
+        {triggers.map((t) => (
+          <button key={t.id} type="button"
+            className={'bf-input bf-input-num' +
+                       (Number(p.trigger) === t.id ? ' is-active' : '')}
+            onClick={() => onChange({ trigger: t.id })}
+            aria-pressed={Number(p.trigger) === t.id}
+            title={t.sub}
+          >{t.label}</button>
+        ))}
+      </div>
+
+      {/* START direction fixo em OFF (comeca em MIN) — sem expor no UI.
+          RESOLUCAO ms fica fixa em 25ms no codigo (fallback do firmware). */}
+
+      {/* RAMP nao tem START ON PRESET — opera SO em LIVE MODE por design.
+          O preset apenas carrega a config; o sweep so comeca quando o
+          usuario pisar no footswitch em LIVE. */}
+
+      {/* SWEEP test + LED */}
+      <div className="bf-extras-row bf-sw-fx1-test">
+        <button
+          type="button"
+          className={'bf-input bf-input-num' + (testFired ? ' is-active' : '')}
+          onClick={fireRamp}
+          aria-label="SWEEP — alterna entre min e max pra preview"
+        >
+          SWEEP
+        </button>
+        <div className={'bf-sw-fx1-led' + (testFired ? '' : ' is-off')}>
+          <FootswitchArc
+            label="LED"
+            colorId={Number(p.color)}
+            onChange={(id) => onChange({ color: id })}
+            litArcs={testFired ? [0, 1, 2] : []}
+            labelInside
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Editor do modo TAP TEMPO — ate 4 slots de CC. Cada press do SW dispara
 // todos os slots com valor 127, e o firmware calcula o tempo entre os
 // dois ultimos taps. O LED no device anima conforme: idle (sem tempo
@@ -2619,9 +3564,10 @@ function SwTapTempoEditor({ sw, params, onChange, ledPreviewLive }) {
   const slots = parseTapSlots(params.tslots || '');
   const configuredCount = slots.filter((s) => s.ch >= 1 && s.ch <= 16).length;
   const minVisible = Math.max(1, configuredCount);
-  const [visibleCount, setVisibleCount] = useState(minVisible);
+  const [visibleCount, setVisibleCount] = useState(
+    Math.min(TAP_MAX_SLOTS, minVisible));
   useEffect(() => {
-    setVisibleCount((v) => Math.max(v, minVisible));
+    setVisibleCount((v) => Math.min(TAP_MAX_SLOTS, Math.max(v, minVisible)));
   }, [minVisible]);
 
   const updateSlot = (idx, patch) => {
@@ -2647,12 +3593,105 @@ function SwTapTempoEditor({ sw, params, onChange, ledPreviewLive }) {
   const ledLitArcs = testFired ? [0, 1, 2] : [];
   const ledDimmed = !testFired;
 
+  const lpCh = Number(params.lp_ch) || 0;
+  const lpNum = clamp(Number(params.lp_num) || 0, 0, 127);
+  const lpOn = clamp(typeof params.lp_on !== 'undefined'
+    ? Number(params.lp_on) : 127, 0, 127);
+  const lpOff = clamp(Number(params.lp_off) || 0, 0, 127);
+  const numOptions = Array.from({ length: 128 }, (_, n) => n);
+
   return (
     <div className="bf-sw-fx1 bf-sw-macros bf-sw-single bf-sw-tap">
       {slots.slice(0, visibleCount).map((s, i) => (
         <SwTapTempoSlot key={i} idx={i} slot={s}
           onChange={(patch) => updateSlot(i, patch)} />
       ))}
+
+      {/* Slot fixo de LONG PRESS — dispara um CC quando o usuario segura
+          o SW (~300ms). Independente dos slots de tap. */}
+      <div className="bf-macros-slot bf-tap-slot bf-tap-lp-slot">
+        <div className="bf-tap-lp-title">LONG PRESS</div>
+        <div className="bf-extras-row bf-tap-slot-row">
+          <label className="bf-extras-cell">
+            <span className="bf-field-label">CC</span>
+            <div className="bf-select-wrap">
+              <select
+                className="bf-input bf-select"
+                value={lpNum}
+                onChange={(e) => onChange({ lp_num: clamp(Number(e.target.value), 0, 127) })}
+                aria-label="CC do long press"
+              >
+                {numOptions.map((n) => <option key={n} value={n}>{n}</option>)}
+              </select>
+              <span className="bf-select-chev">▾</span>
+            </div>
+          </label>
+          <label className="bf-extras-cell">
+            <span className="bf-field-label">ON</span>
+            <div className="bf-select-wrap">
+              <select
+                className="bf-input bf-select"
+                value={lpOn}
+                onChange={(e) => onChange({ lp_on: clamp(Number(e.target.value), 0, 127) })}
+                aria-label="Valor enviado ao segurar (ON)"
+              >
+                {numOptions.map((n) => <option key={n} value={n}>{n}</option>)}
+              </select>
+              <span className="bf-select-chev">▾</span>
+            </div>
+          </label>
+          <label className="bf-extras-cell">
+            <span className="bf-field-label">OFF</span>
+            <div className="bf-select-wrap">
+              <select
+                className="bf-input bf-select"
+                value={lpOff}
+                onChange={(e) => onChange({ lp_off: clamp(Number(e.target.value), 0, 127) })}
+                aria-label="Valor enviado ao soltar (OFF)"
+              >
+                {numOptions.map((n) => <option key={n} value={n}>{n}</option>)}
+              </select>
+              <span className="bf-select-chev">▾</span>
+            </div>
+          </label>
+          <label className="bf-extras-cell">
+            <span className="bf-field-label">Canal</span>
+            <div className="bf-select-wrap">
+              <select
+                className={'bf-input bf-select' + (lpCh === 0 ? ' is-mute' : '')}
+                value={lpCh}
+                onChange={(e) => onChange({ lp_ch: Number(e.target.value) })}
+                aria-label="Canal do long press"
+              >
+                <option value={0}>OFF</option>
+                {Array.from({ length: 16 }, (_, i) => i + 1).map((n) => (
+                  <option key={n} value={n}>{n}</option>
+                ))}
+              </select>
+              <span className="bf-select-chev">▾</span>
+            </div>
+          </label>
+        </div>
+        {/* START ON/OFF + START ON PRESET — toggle do estado inicial e
+            controle de disparo no load do preset (espelha STOMP/MACROS). */}
+        <div className="bf-extras-row bf-tap-lp-flags">
+          <button
+            type="button"
+            className={'bf-input bf-input-num' + (params.lp_start === 1 ? ' is-active' : '')}
+            onClick={() => onChange({ lp_start: params.lp_start === 1 ? 0 : 1 })}
+            aria-label="Estado inicial do LONG PRESS"
+            title="START ON = comeca ligado; START OFF = comeca desligado"
+          >START {params.lp_start === 1 ? 'ON' : 'OFF'}</button>
+          <button
+            type="button"
+            className={'bf-input bf-input-num' + (params.lp_at_preset === 1 ? ' is-active' : '')}
+            onClick={() => onChange({ lp_at_preset: params.lp_at_preset === 1 ? 0 : 1 })}
+            aria-label="Disparar com o preset"
+            title="ON = dispara o LONG PRESS na chamada do preset; OFF = aguarda LIVE"
+          >{params.lp_at_preset === 1 ? 'START ON PRESET' : 'WAITING LIVE MODE'}</button>
+        </div>
+      </div>
+
       <div className="bf-extras-row bf-sw-fx1-test">
         <button
           type="button"
@@ -2672,7 +3711,7 @@ function SwTapTempoEditor({ sw, params, onChange, ledPreviewLive }) {
           />
         </div>
       </div>
-      {(visibleCount > 1 || visibleCount < 4) && (
+      {(visibleCount > 1 || visibleCount < TAP_MAX_SLOTS) && (
         <div className="bf-tap-slot-actions">
           {visibleCount > 1 && (
             <button
@@ -2689,7 +3728,7 @@ function SwTapTempoEditor({ sw, params, onChange, ledPreviewLive }) {
               title="Remover ultimo slot"
             >REMOVE</button>
           )}
-          {visibleCount < 4 && (
+          {visibleCount < TAP_MAX_SLOTS && (
             <button
               type="button"
               className="bf-tap-action bf-tap-action-add"
@@ -2866,15 +3905,34 @@ function SwSingleEditor({ sw, params, onChange, ledPreviewLive, isActiveSingle }
         <SwSingleSlot key={i} idx={i} slot={s}
           onChange={(patch) => updateSlot(i, patch)} />
       ))}
-      {visibleCount < 4 && (
-        <div className="bf-single-add-row">
-          <button
-            type="button"
-            className="bf-single-add"
-            onClick={() => setVisibleCount(visibleCount + 1)}
-            aria-label="Adicionar mais um slot"
-            title="Adicionar mais um slot"
-          >+</button>
+      {(visibleCount > 1 || visibleCount < 4) && (
+        <div className="bf-tap-slot-actions">
+          {visibleCount > 1 && (
+            <button
+              type="button"
+              className="bf-tap-action bf-tap-action-remove"
+              onClick={() => {
+                const last = visibleCount - 1;
+                const cur = slots[last];
+                if (cur && (cur.ch !== 0 || cur.num !== 0 ||
+                            cur.val !== 0 || cur.t !== 0)) {
+                  updateSlot(last, emptySingleSlot());
+                }
+                setVisibleCount(visibleCount - 1);
+              }}
+              aria-label="Remover ultimo slot"
+              title="Remover ultimo slot"
+            >REMOVE SLOT</button>
+          )}
+          {visibleCount < 4 && (
+            <button
+              type="button"
+              className="bf-tap-action bf-tap-action-add"
+              onClick={() => setVisibleCount(visibleCount + 1)}
+              aria-label="Adicionar mais um slot"
+              title="Adicionar mais um slot"
+            >ADD SLOT</button>
+          )}
         </div>
       )}
       <div className="bf-extras-row">
@@ -2917,11 +3975,37 @@ function LiveModePanel({ presetCount, swModes, onSetSwMode, swParams, onSetSwPar
   const [selectedSw, setSelectedSw] = useState(null);  // 1..N ou null
   const [cardTab, setCardTab] = useState('gear');      // 'gear' | 'display'
   const [pickerOpen, setPickerOpen] = useState(false); // popup de selecao de modo
+  // Clipboard pra COPY/PASTE entre SWs — { modeId, params } do SW copiado.
+  // Vive enquanto a pagina LIVE estiver aberta; perdido ao trocar de page.
+  const [swClipboard, setSwClipboard] = useState(null);
+  const [copyFlash, setCopyFlash] = useState(false);
   const switches = Array.from({ length: presetCount }, (_, i) => i + 1);
 
   // Modo de um SW: o que estiver salvo, ou MUTE como padrao quando nada
   // foi salvo ainda.
   const modeOf = (n) => swModes[n] || 'mute';
+
+  // Copia modo + params do SW selecionado pro clipboard interno.
+  const copyFromSelected = () => {
+    if (selectedSw === null) return;
+    const modeId = modeOf(selectedSw);
+    if (modeId === 'mute') return;
+    const params = (swParams && swParams[selectedSw] && swParams[selectedSw][modeId])
+      ? swParams[selectedSw][modeId]
+      : DEFAULT_SW_PARAMS(modeId);
+    // Clona profundo pra desacoplar do state vivo do SW de origem.
+    setSwClipboard({ modeId, params: JSON.parse(JSON.stringify(params)) });
+    setCopyFlash(true);
+    setTimeout(() => setCopyFlash(false), 800);
+  };
+
+  // Cola o clipboard no SW selecionado (troca modo + sobrescreve params).
+  const pasteIntoSelected = () => {
+    if (selectedSw === null || !swClipboard) return;
+    onSetSwMode(selectedSw, swClipboard.modeId);
+    onSetSwParam(selectedSw, swClipboard.modeId,
+      JSON.parse(JSON.stringify(swClipboard.params)));
+  };
 
   const selectSw = (n) => {
     setPickerOpen(false);
@@ -2994,6 +4078,48 @@ function LiveModePanel({ presetCount, swModes, onSetSwMode, swParams, onSetSwPar
                 <path className="bf-tab-shape" d="M9 21h6 M12 16.5v4.5" />
               </svg>
             </button>
+            {/* COPY / PASTE — coluna estreita com 2 botoes empilhados,
+                mesma largura dos icones de aba mas cada um com metade da
+                altura. Permite copiar a config inteira (modo + params) de
+                um SW e colar em outro. */}
+            <div className="bf-sw-card-copypaste">
+              <button
+                type="button"
+                className={'bf-sw-card-cp bf-sw-card-cp-copy' +
+                           (copyFlash ? ' is-flash' : '')}
+                onClick={copyFromSelected}
+                disabled={modeOf(selectedSw) === 'mute'}
+                title="COPY — copia modo + configuracao desse SW"
+                aria-label="Copiar configuracao do SW"
+              >
+                <svg viewBox="0 0 24 24" className="bf-tab-ico"
+                     strokeLinecap="round" strokeLinejoin="round"
+                     aria-hidden="true">
+                  {/* Icone clipboard duplicado: 2 retangulos sobrepostos */}
+                  <rect className="bf-tab-shape" x="8" y="8" width="11" height="13" rx="2" />
+                  <path className="bf-tab-shape" d="M16 8V5a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h1" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                className="bf-sw-card-cp bf-sw-card-cp-paste"
+                onClick={pasteIntoSelected}
+                disabled={!swClipboard}
+                title={swClipboard
+                  ? `PASTE — aplica config copiada (${swClipboard.modeId.toUpperCase()})`
+                  : 'PASTE — nada copiado ainda'}
+                aria-label="Colar configuracao no SW"
+              >
+                <svg viewBox="0 0 24 24" className="bf-tab-ico"
+                     strokeLinecap="round" strokeLinejoin="round"
+                     aria-hidden="true">
+                  {/* Icone clipboard com seta pra dentro */}
+                  <path className="bf-tab-shape" d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+                  <rect className="bf-tab-shape" x="8" y="2" width="8" height="4" rx="1" />
+                  <path className="bf-tab-shape" d="M12 11v6 M9 14l3 3 3-3" />
+                </svg>
+              </button>
+            </div>
           </div>
 
           <div className="bf-sw-card-body">
@@ -3007,6 +4133,7 @@ function LiveModePanel({ presetCount, swModes, onSetSwMode, swParams, onSetSwPar
                   onChange={(patch) => onSetSwParam(selectedSw, modeOf(selectedSw), patch)}
                   ledPreviewLive={ledPreviewLive}
                   liveOn={Array.isArray(swLiveOn) ? swLiveOn[selectedSw - 1] : undefined}
+                  presetCount={presetCount}
                 />
               ) : modeOf(selectedSw) === 'fx2' ? (
                 <SwFx2Editor
@@ -3017,6 +4144,7 @@ function LiveModePanel({ presetCount, swModes, onSetSwMode, swParams, onSetSwPar
                   onChange={(patch) => onSetSwParam(selectedSw, 'fx2', patch)}
                   ledPreviewLive={ledPreviewLive}
                   liveOn={Array.isArray(swLiveOn) ? swLiveOn[selectedSw - 1] : undefined}
+                  presetCount={presetCount}
                 />
               ) : modeOf(selectedSw) === 'momentary' ? (
                 <SwMomentaryEditor
@@ -3055,6 +4183,24 @@ function LiveModePanel({ presetCount, swModes, onSetSwMode, swParams, onSetSwPar
                   onChange={(patch) => onSetSwParam(selectedSw, 'single', patch)}
                   ledPreviewLive={ledPreviewLive}
                   isActiveSingle={lastSingleSw === selectedSw - 1}
+                />
+              ) : modeOf(selectedSw) === 'ramp' ? (
+                <SwRampEditor
+                  key={selectedSw}
+                  sw={selectedSw}
+                  params={(swParams && swParams[selectedSw] && swParams[selectedSw].ramp)
+                    || DEFAULT_SW_PARAMS('ramp')}
+                  onChange={(patch) => onSetSwParam(selectedSw, 'ramp', patch)}
+                  ledPreviewLive={ledPreviewLive}
+                />
+              ) : modeOf(selectedSw) === 'spin' ? (
+                <SwSpinEditor
+                  key={selectedSw}
+                  sw={selectedSw}
+                  params={(swParams && swParams[selectedSw] && swParams[selectedSw].spin)
+                    || DEFAULT_SW_PARAMS('spin')}
+                  onChange={(patch) => onSetSwParam(selectedSw, 'spin', patch)}
+                  ledPreviewLive={ledPreviewLive}
                 />
               ) : (
                 <div className="bf-sw-card-empty">
@@ -3464,6 +4610,13 @@ function MonitorView({ switchMode, monitorEntry, liveEvents }) {
                               <span className="bf-msg-num">{m.pc}</span>
                               <span className="bf-msg-sep">·</span>
                               <span className="bf-msg-ch">CH {m.ch}</span>
+                            </>
+                          ) : m.kind === 'fav' ? (
+                            <>
+                              <span className="bf-msg-type is-fav">FAV</span>
+                              <span className="bf-msg-num">{m.bank}{m.preset}</span>
+                              <span className="bf-msg-sep">·</span>
+                              <span className="bf-msg-ch">{m.mode}</span>
                             </>
                           ) : (
                             <>
@@ -4218,7 +5371,11 @@ function PageSystemConfig({
 }
 
 // ─── Tab bar ────────────────────────────────────────────────────────
-function TabBar({ page, setPage, saveState, onSave }) {
+function TabBar({ page, setPage, saveState, onSave,
+                  onCopyPreset, onPastePreset, presetClipboard,
+                  presetClipboardStatus,
+                  onCopyBank, onPasteBank, bankClipboard,
+                  bankClipboardStatus }) {
   const tabs = [
     { id: 'preset_config', label: 'PRESET' },
     { id: 'global_config', label: 'GLOBAL' },
@@ -4228,6 +5385,16 @@ function TabBar({ page, setPage, saveState, onSave }) {
     saveState === 'saving' ? '…' :
     saveState === 'saved'  ? '✓' :
     saveState === 'error'  ? '!' : 'SAVE';
+  const [menuOpen, setMenuOpen] = React.useState(false);
+  React.useEffect(() => {
+    if (!menuOpen) return;
+    const onDoc = (e) => {
+      if (e.target.closest('.bf-tabbar-plus-wrap')) return;
+      setMenuOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [menuOpen]);
   return (
     <div className="bf-tabbar">
       {tabs.map((t) => (
@@ -4237,6 +5404,110 @@ function TabBar({ page, setPage, saveState, onSave }) {
           onClick={() => setPage(t.id)}
         >{t.label}</button>
       ))}
+      {/* Botao "+" abre menu com COPY PRESET / PASTE PRESET. So
+          aparece quando esta na pagina PRESET (acoes nao fazem sentido
+          em GLOBAL/SYSTEM). */}
+      {page === 'preset_config' && (
+        <div className="bf-tabbar-plus-wrap">
+          <button
+            type="button"
+            className={'bf-tabbar-plus' +
+                       (menuOpen ? ' is-open' : '') +
+                       ((presetClipboardStatus === 'copied' || presetClipboardStatus === 'pasted' ||
+                         bankClipboardStatus === 'copied' || bankClipboardStatus === 'pasted')
+                         ? ' is-flash-ok' : '') +
+                       ((presetClipboardStatus === 'pasting' || bankClipboardStatus === 'pasting' ||
+                         bankClipboardStatus === 'copying')
+                         ? ' is-busy' : '') +
+                       ((presetClipboardStatus === 'error' || bankClipboardStatus === 'error')
+                         ? ' is-flash-err' : '')}
+            onClick={() => setMenuOpen((v) => !v)}
+            aria-label="Acoes do preset"
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            title="Acoes do preset (copy/paste)"
+          >
+            <svg viewBox="0 0 24 24" width="18" height="18"
+                 fill="none" stroke="currentColor" strokeWidth="2.6"
+                 strokeLinecap="round" aria-hidden="true">
+              <path d="M12 5v14 M5 12h14" />
+            </svg>
+          </button>
+          {menuOpen && (
+            <div className="bf-tabbar-plus-menu" role="menu">
+              <button
+                type="button"
+                role="menuitem"
+                className="bf-tabbar-plus-item"
+                onClick={() => { setMenuOpen(false); onCopyPreset && onCopyPreset(); }}
+              >
+                <svg viewBox="0 0 24 24" width="16" height="16"
+                     fill="none" stroke="currentColor" strokeWidth="2"
+                     strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <rect x="8" y="8" width="11" height="13" rx="2" />
+                  <path d="M16 8V5a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h1" />
+                </svg>
+                <span>COPY PRESET</span>
+              </button>
+              {presetClipboard && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="bf-tabbar-plus-item"
+                  onClick={() => { setMenuOpen(false); onPastePreset && onPastePreset(); }}
+                  title={`Cola o preset copiado (${presetClipboard.srcTag})`}
+                >
+                  <svg viewBox="0 0 24 24" width="16" height="16"
+                       fill="none" stroke="currentColor" strokeWidth="2"
+                       strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+                    <rect x="8" y="2" width="8" height="4" rx="1" />
+                    <path d="M12 11v6 M9 14l3 3 3-3" />
+                  </svg>
+                  <span>PASTE PRESET <em>({presetClipboard.srcTag})</em></span>
+                </button>
+              )}
+              <div className="bf-tabbar-plus-sep" />
+              <button
+                type="button"
+                role="menuitem"
+                className="bf-tabbar-plus-item"
+                onClick={() => { setMenuOpen(false); onCopyBank && onCopyBank(); }}
+                disabled={bankClipboardStatus === 'copying'}
+                title="Copia os 6 presets do banco atual (pode demorar 2-5s)"
+              >
+                <svg viewBox="0 0 24 24" width="16" height="16"
+                     fill="none" stroke="currentColor" strokeWidth="2"
+                     strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  {/* Pilha de 3 retangulos = banco com varios presets */}
+                  <rect x="3" y="3" width="14" height="14" rx="2" />
+                  <path d="M7 7h14v14H7z" />
+                </svg>
+                <span>COPY BANK {bankClipboardStatus === 'copying' ? '…' : ''}</span>
+              </button>
+              {bankClipboard && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="bf-tabbar-plus-item"
+                  onClick={() => { setMenuOpen(false); onPasteBank && onPasteBank(); }}
+                  disabled={bankClipboardStatus === 'pasting'}
+                  title={`Cola os 6 presets do banco ${bankClipboard.srcLetter} no banco atual`}
+                >
+                  <svg viewBox="0 0 24 24" width="16" height="16"
+                       fill="none" stroke="currentColor" strokeWidth="2"
+                       strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <rect x="3" y="3" width="14" height="14" rx="2" />
+                    <path d="M7 7h14v14H7z" />
+                    <path d="M14 11v6 M11 14l3 3 3-3" />
+                  </svg>
+                  <span>PASTE BANK <em>({bankClipboard.srcLetter}{bankClipboardStatus === 'pasting' ? '…' : ''})</em></span>
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
       <button
         className={'bf-save is-' + (saveState || 'idle')}
         onClick={onSave}
@@ -4601,6 +5872,17 @@ function App() {
   // pagina — sobrevive ao toggle PRESET/LIVE, diferente do savedMetaByTag
   // do PresetEditorCard que desmonta com o card).
   const [currentSavedMeta, setCurrentSavedMeta] = useState(null);
+  // Clipboard de preset INTEIRO — { srcTag, meta, swModes, swParams }.
+  // COPY: snapshot do preset atual; PASTE: aplica em outro preset.
+  // Vive enquanto o webApp roda (perdido no refresh da pagina).
+  const [presetClipboard, setPresetClipboard] = useState(null);
+  const [presetClipboardStatus, setPresetClipboardStatus] = useState('idle');
+  // Clipboard de BANK INTEIRO — { srcLetter, presets: [{ tag, meta,
+  // swModes, swParams }, ...] }. COPY BANK varre os 6 presets do banco
+  // atual; PASTE BANK aplica todos no banco corrente. Mais pesado que
+  // o clipboard de preset — pode demorar varios segundos pra colar.
+  const [bankClipboard, setBankClipboard] = useState(null);
+  const [bankClipboardStatus, setBankClipboardStatus] = useState('idle');
   // Snapshot do preset atual exibido no MONITOR. Reconstruido pelo
   // useEffect abaixo a partir do savedMeta + savedSwModes + savedSwParams.
   const [monitorEntry, setMonitorEntry] = useState(null);
@@ -4616,6 +5898,7 @@ function App() {
   const swSingleCountRef = useRef([0, 0, 0, 0, 0, 0]);
   // Contador de taps do modo TAP TEMPO.
   const swTapCountRef = useRef([0, 0, 0, 0, 0, 0]);
+  const swSpinStateRef = useRef([-1, -1, -1, -1, -1, -1]);
   // Qual SW em SINGLE foi o ultimo a disparar (vindo do firmware).
   // -1 = nenhum. Usado pelo SwSingleEditor pra mostrar o LED aceso.
   const [lastSingleSw, setLastSingleSw] = useState(-1);
@@ -4697,6 +5980,140 @@ function App() {
   const setSwMode = (sw, modeId) =>
     setSwModes((prev) => ({ ...prev, [sw]: modeId }));
 
+  // COPY PRESET — snapshot completo do preset atual (meta + sw_modes +
+  // sw_params) pro clipboard interno. Usa SAVED state (nao edits ainda
+  // pendentes) pra evitar copiar lixo nao confirmado.
+  const copyCurrentPreset = useCallback(() => {
+    const tag = currentTagRef.current;
+    if (!currentSavedMeta) return;
+    const clone = (o) => JSON.parse(JSON.stringify(o));
+    setPresetClipboard({
+      srcTag: tag,
+      meta: clone(currentSavedMeta),
+      swModes: clone(savedSwModes || {}),
+      swParams: clone(savedSwParams || {}),
+    });
+    setPresetClipboardStatus('copied');
+    setTimeout(() => setPresetClipboardStatus('idle'), 1500);
+  }, [currentSavedMeta, savedSwModes, savedSwParams]);
+
+  // PASTE PRESET — aplica o clipboard no preset ATUAL (currentTag).
+  // Sobrescreve meta (header), sw_modes e sw_params no firmware via API
+  // e atualiza o state local. Nao copia o tag (preset identity fica).
+  const pasteIntoCurrentPreset = useCallback(async () => {
+    if (!presetClipboard) return;
+    const tag = currentTagRef.current;
+    if (!tag || tag === presetClipboard.srcTag) {
+      // Colar no mesmo preset que foi copiado nao faz sentido.
+      setPresetClipboardStatus('error');
+      setTimeout(() => setPresetClipboardStatus('idle'), 1500);
+      return;
+    }
+    setPresetClipboardStatus('pasting');
+    try {
+      // 1) Meta + sw_modes num POST /bank/preset (mesma rota do SAVE).
+      const headerBody = metaToApiBody(presetClipboard.meta);
+      // Inclui sw_modes ja codificado.
+      headerBody.set('sw_modes', swModesToStr(presetClipboard.swModes));
+      await apiCall('POST',
+        `/bank/preset?bank=${encodeURIComponent(tag)}`, headerBody);
+
+      // 2) Params por SW/modo — itera o clipboard.swParams.
+      for (let sw = 1; sw <= 6; sw++) {
+        const modes = (presetClipboard.swParams || {})[sw] || {};
+        for (const modeId of Object.keys(modes)) {
+          await apiCall('POST',
+            `/sw/params?bank=${encodeURIComponent(tag)}&sw=${sw}` +
+            `&mode=${encodeURIComponent(modeId)}`,
+            swParamsToApiBody(modes[modeId]));
+        }
+      }
+
+      // 3) Re-carrega o preset pra refletir o estado novo no UI.
+      await loadSwParams(tag);
+      // O proximo poll de /bank/current sincroniza meta/sw_modes.
+      setPresetClipboardStatus('pasted');
+      setTimeout(() => setPresetClipboardStatus('idle'), 1500);
+    } catch (e) {
+      setPresetClipboardStatus('error');
+      setTimeout(() => setPresetClipboardStatus('idle'), 1800);
+    }
+  }, [presetClipboard]);
+
+  // COPY BANK — varre todos os 6 presets do banco atual (A..E) e
+  // armazena um snapshot completo. Faz 12 GETs (6 metas + 6 sw_params).
+  // Pode demorar 2-5s dependendo do transport (USB/WiFi).
+  const copyCurrentBank = useCallback(async () => {
+    const letterIdx = bankLetterIndex;
+    const letter = String.fromCharCode(65 + (letterIdx % 5));
+    setBankClipboardStatus('copying');
+    try {
+      const presets = [];
+      for (let p = 1; p <= 6; p++) {
+        const tag = `${letter}${p}`;
+        const presetResp = await apiCall('GET',
+          `/bank/preset?bank=${encodeURIComponent(tag)}`);
+        const rawMeta = (presetResp && presetResp.meta) || presetResp || {};
+        const meta = metaFromApi(rawMeta);
+        const swModes = parseSwModesStr(rawMeta.sw_modes || '0,0,0,0,0,0');
+        const paramsResp = await apiCall('GET',
+          `/sw/params?bank=${encodeURIComponent(tag)}`);
+        const swParams = parseSwParamsObj(paramsResp && paramsResp.sw_params);
+        presets.push({ tag, meta, swModes, swParams });
+      }
+      setBankClipboard({ srcLetter: letter, presets });
+      setBankClipboardStatus('copied');
+      setTimeout(() => setBankClipboardStatus('idle'), 1500);
+    } catch (e) {
+      setBankClipboardStatus('error');
+      setTimeout(() => setBankClipboardStatus('idle'), 1800);
+    }
+  }, [bankLetterIndex]);
+
+  // PASTE BANK — aplica os 6 presets do clipboard no banco corrente.
+  // Sobrescreve TUDO (meta + sw_modes + sw_params) de cada preset.
+  // Pula se for o mesmo banco origem.
+  const pasteIntoCurrentBank = useCallback(async () => {
+    if (!bankClipboard || !Array.isArray(bankClipboard.presets)) return;
+    const letterIdx = bankLetterIndex;
+    const letter = String.fromCharCode(65 + (letterIdx % 5));
+    if (letter === bankClipboard.srcLetter) {
+      setBankClipboardStatus('error');
+      setTimeout(() => setBankClipboardStatus('idle'), 1500);
+      return;
+    }
+    setBankClipboardStatus('pasting');
+    try {
+      for (const src of bankClipboard.presets) {
+        // src.tag e o tag de origem (ex: A1, A2...). Reescreve no destino
+        // mantendo o numero do preset (1..6), so trocando a letra.
+        const presetNum = parseInt(src.tag.slice(1), 10) || 1;
+        const destTag = `${letter}${presetNum}`;
+        const headerBody = metaToApiBody(src.meta);
+        headerBody.set('sw_modes', swModesToStr(src.swModes));
+        await apiCall('POST',
+          `/bank/preset?bank=${encodeURIComponent(destTag)}`, headerBody);
+        for (let sw = 1; sw <= 6; sw++) {
+          const modes = (src.swParams || {})[sw] || {};
+          for (const modeId of Object.keys(modes)) {
+            await apiCall('POST',
+              `/sw/params?bank=${encodeURIComponent(destTag)}&sw=${sw}` +
+              `&mode=${encodeURIComponent(modeId)}`,
+              swParamsToApiBody(modes[modeId]));
+          }
+        }
+      }
+      // Re-carrega o preset corrente pra refletir mudancas no UI.
+      const curTag = currentTagRef.current;
+      if (curTag) await loadSwParams(curTag);
+      setBankClipboardStatus('pasted');
+      setTimeout(() => setBankClipboardStatus('idle'), 1500);
+    } catch (e) {
+      setBankClipboardStatus('error');
+      setTimeout(() => setBankClipboardStatus('idle'), 1800);
+    }
+  }, [bankClipboard, bankLetterIndex]);
+
   // Edita um campo de um SW/modo. Cria a entrada com os defaults do modo
   // se ainda nao existir. Local — persistido pelo SAVE do rodape.
   const setSwParam = (sw, modeId, patch) =>
@@ -4740,10 +6157,30 @@ function App() {
         `/bank/preset?bank=${encodeURIComponent(tag)}`, headerBody);
       setSavedSwModes(swModes);
 
-      // Params: posta so os SW/modo que mudaram desde o ultimo SAVE.
+      // Params: posta SW/modo que mudou desde o ultimo SAVE. Tambem
+      // garante que o MODO ATIVO de cada SW tenha linha gravada — mesmo
+      // que o usuario nao tenha aberto o editor (sem isso, escolher o
+      // modo pelo picker sem tocar em nenhum campo nao gera linha
+      // sw<N>.<modo>: no arquivo do preset, e o firmware nao reconhece
+      // a configuracao na proxima chamada).
+      const updatedSwParams = { ...swParams };
       for (let sw = 1; sw <= 6; sw++) {
-        const modes = swParams[sw] || {};
+        const activeMode = swModes[sw] || 'mute';
+        // Materializa defaults se o usuario nao abriu o editor desse SW.
+        if (activeMode !== 'mute') {
+          const cur = swParams[sw] && swParams[sw][activeMode];
+          if (!cur) {
+            const defaults = DEFAULT_SW_PARAMS(activeMode);
+            updatedSwParams[sw] = {
+              ...(updatedSwParams[sw] || {}),
+              [activeMode]: defaults,
+            };
+          }
+        }
+        const modes = updatedSwParams[sw] || {};
         for (const modeId of Object.keys(modes)) {
+          // Para o modo ativo, sempre posta se ainda nao foi salvo.
+          // Para outros modos no swParams, segue diff normal.
           const cur = JSON.stringify(modes[modeId]);
           const prev = JSON.stringify((savedSwParams[sw] || {})[modeId]);
           if (cur === prev) continue;
@@ -4753,7 +6190,8 @@ function App() {
             swParamsToApiBody(modes[modeId]));
         }
       }
-      setSavedSwParams(swParams);
+      setSwParams(updatedSwParams);
+      setSavedSwParams(updatedSwParams);
 
       setSwModesStatus('saved');
       setTimeout(() => setSwModesStatus((s) => (s === 'saved' ? 'idle' : s)), 1200);
@@ -4945,6 +6383,9 @@ function App() {
       const newTapCount = Array.isArray(bank.sw_tap_count)
         ? Array.from({ length: 6 }, (_, i) => Number(bank.sw_tap_count[i]) || 0)
         : null;
+      const newSpinState = Array.isArray(bank.sw_spin_state)
+        ? Array.from({ length: 6 }, (_, i) => Number(bank.sw_spin_state[i]))
+        : null;
       // Detecta presses em LIVE MODE: flip em swLiveOn / swLiveOn2 /
       // swLiveOn3 entre polls vira um evento pro MONITOR. Delta no
       // sw_momentary_count loga um evento por pulse do modo MOMENTARY
@@ -5009,6 +6450,14 @@ function App() {
               if (ev) newEvents.push({ ...ev, time });
             }
           }
+          if (newSpinState && newSpinState[i] !== swSpinStateRef.current[i] &&
+              newSpinState[i] >= 0) {
+            // SPIN — passa o stateIndex como nowOn (hack pra reaproveitar
+            // a assinatura do builder).
+            const ev = buildLivePressEvent(i + 1, 0, newSpinState[i],
+              savedSwModesRef.current, savedSwParamsRef.current);
+            if (ev) newEvents.push({ ...ev, time });
+          }
         }
         if (newEvents.length) {
           // Substitui — o monitor mostra so o disparo MAIS RECENTE.
@@ -5042,6 +6491,9 @@ function App() {
       }
       if (newTapCount) {
         swTapCountRef.current = newTapCount;
+      }
+      if (newSpinState) {
+        swSpinStateRef.current = newSpinState;
       }
       if (newLastSingle !== null) {
         setLastSingleSw((cur) => (cur === newLastSingle ? cur : newLastSingle));
@@ -5116,6 +6568,12 @@ function App() {
           (_, i) => Number(bank.sw_tap_count[i]) || 0);
       } else {
         swTapCountRef.current = [0, 0, 0, 0, 0, 0];
+      }
+      if (Array.isArray(bank.sw_spin_state)) {
+        swSpinStateRef.current = Array.from({ length: 6 },
+          (_, i) => Number(bank.sw_spin_state[i]));
+      } else {
+        swSpinStateRef.current = [-1, -1, -1, -1, -1, -1];
       }
       if (typeof bank.last_single_sw !== 'undefined') {
         setLastSingleSw(Number(bank.last_single_sw));
@@ -5376,6 +6834,14 @@ function App() {
               : switchMode === 'live'
                 ? saveLive
                 : () => { const h = presetSaveRef.current; if (h && h.save) h.save(); }}
+          onCopyPreset={copyCurrentPreset}
+          onPastePreset={pasteIntoCurrentPreset}
+          presetClipboard={presetClipboard}
+          presetClipboardStatus={presetClipboardStatus}
+          onCopyBank={copyCurrentBank}
+          onPasteBank={pasteIntoCurrentBank}
+          bankClipboard={bankClipboard}
+          bankClipboardStatus={bankClipboardStatus}
         />
       </div>
     </div>

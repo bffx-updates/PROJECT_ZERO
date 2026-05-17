@@ -231,27 +231,17 @@ Helpers em [BANK_MEMORY.h](../BANK_MEMORY.h): acessores genéricos `bankMemoryGe
 
 Em LIVE MODE o card vira o `LiveModePanel`: 6 botões SW1–SW6, cada um abre um sub-card com o **modo de operação** do SW (picker) e duas abas (engrenagem = parâmetros, display = em breve).
 
-**Modos** (`SW_MODES` em [app.jsx](app.jsx) / `SW_MODE_IDS` em [BANK_MEMORY.h](../BANK_MEMORY.h) — mesma ordem): índice `0 = mute`, `1 = fx1` (STOMP 1), `2 = fx2`, `3 = fx3`, `4 = spin`, `5 = ramp`, `6 = momentary`, `7 = favorite`, `8 = macros`, `9 = tap_tempo`, `10 = single`. O modo ativo de cada SW vai no campo `sw_modes` do header (`i,i,i,i,i,i`).
+**Modos** (`SW_MODES` em [app.jsx](app.jsx) / `SW_MODE_IDS` em [BANK_MEMORY.h](../BANK_MEMORY.h) — mesma ordem): índice `0 = mute`, `1 = fx1` (STOMP unificado), `2 = fx2` (legado), `3 = fx3` (legado), `4 = spin`, `5 = ramp`, `6 = momentary`, `7 = favorite` (removido do picker, agora vive como toggle por seção do STOMP), `8 = macros`, `9 = tap_tempo`, `10 = single`. O modo ativo de cada SW vai no campo `sw_modes` do header (`i,i,i,i,i,i`).
 
-**Parâmetros por SW** ficam nas linhas 3+ do arquivo do preset, formato `sw<N>.<modo>:<key=value|...>`, esparso — trocar o modo de um SW não apaga os params do modo anterior.
+Todos os modos estão implementados (exceto `mute`, que é o estado padrão silencioso). Detalhamento completo do **comportamento** de cada modo (parâmetros, gestos, LED, MIDI, MONITOR) está em [Mode_LIVE.md](Mode_LIVE.md). Esta seção foca só no que o **webApp** faz pra render/save.
 
-STOMP 1 (`fx1`) — blob `type|num|ch|custom|on|off|start|color`:
+**Parâmetros por SW** ficam nas linhas 3+ do arquivo do preset, formato `sw<N>.<modo>:<key=value|...>`, esparso — trocar o modo de um SW não apaga os params do modo anterior. O blob mistura campos numéricos simples (`ch`, `num`, `color`, ...) com campos **composite string** que carregam slots (`mslots`, `sslots`, `tslots`, `mom_slots`, `spin_slots`) — esses últimos seguem o padrão `campo:campo:..,campo:campo:..` (separador `:` entre subcampos, `,` entre slots).
 
-| Key | Range | Significado |
-|---|---|---|
-| `type` | 0 = CC, 1 = PC | tipo de mensagem |
-| `num` | 0–127 | número do CC ou programa do PC |
-| `ch` | 0 = OFF, 1–16 | canal MIDI |
-| `custom` | 0/1 | habilita valores on/off próprios (botão `CUSTOM` no editor) |
-| `on` / `off` | 0–127 | valores CC; efetivos só com `custom=1`, senão 127/0 |
-| `start` | 0/1 | estado inicial (LED/toggle) |
-| `color` | 0–14 | cor do LED do SW (índice em `LED_COLORS`) |
+Cada modo tem seu **editor próprio** no webApp (`SwStompEditor`, `SwMomentaryEditor`, `SwMacrosEditor`, `SwSingleEditor`, `SwSpinEditor`, `SwRampEditor`, `SwTapTempoEditor` — todos em [app.jsx](app.jsx)), reusando `bf-extras-row` / `bf-extras-cell` / `bf-tap-slot-actions` (ADD/REMOVE SLOT) / `bf-spin-bar` (meter horizontal) etc.
 
-PC omite `custom`/`on`/`off`/`start`/`color` (só `num` + `ch`).
+**Runtime no firmware:** `swActive` ([BANK_MEMORY.h](../BANK_MEMORY.h)) é um cache do modo ativo de cada SW, **só do preset ativo**, recarregado a cada troca de preset (`swActiveLoadCurrent`). Na chamada do preset (qualquer modo), `swActiveSendInitialMidi` dispara o MIDI inicial de cada SW junto do header (modos como RAMP, TAP TEMPO tap-slots e MOMENTARY **nunca** disparam no load — só reagem a press). Em LIVE MODE, `swLiveUpdate` despacha cada gesto pro handler do modo correspondente ([SW_LIVE.h](../SW_LIVE.h)); o LED é re-renderizado conforme o modo ([LED_STRIP.h](../LED_STRIP.h)). Estados runtime são **compartilhados entre modos** sempre que possível (`liveOn*`, `ledBlinkNextMs`, `ledBlinkPhase`) — ver [Mode_LIVE.md §11](Mode_LIVE.md#11-convenções-de-variáveis).
 
-**Runtime no firmware:** `swActive` ([BANK_MEMORY.h](../BANK_MEMORY.h)) é um cache do modo ativo de cada SW, **só do preset ativo**, recarregado a cada troca de preset (`swActiveLoadCurrent`). Na chamada do preset (qualquer modo), `swActiveSendInitialMidi` dispara o MIDI inicial de cada SW junto do header. Em LIVE MODE, o toque do footswitch alterna o estado (CC) ou re-envia (PC) e o LED do SW reflete o on/off ([SW_LIVE.h](../SW_LIVE.h) / [LED_STRIP.h](../LED_STRIP.h)).
-
-**webApp:** `LiveModePanel` recebe `swModes` + `swParams` (estado no `App`). O cliente busca `GET /sw/params` na troca de preset, com guarda contra o poll de 1.5s sobrescrever edição pendente. O SAVE do rodapé em LIVE (`saveLive`) grava o `sw_modes` do header e, em seguida, cada linha de SW alterada via `POST /sw/params`. Editor do STOMP 1: `SwFx1Editor` (reusa `bf-extras-row` / `bf-extras-cell`).
+**webApp:** `LiveModePanel` recebe `swModes` + `swParams` (estado no `App`). O cliente busca `GET /sw/params` na troca de preset, com guarda contra o poll de 1.5s sobrescrever edição pendente. O SAVE do rodapé em LIVE (`saveLive`) grava o `sw_modes` do header e, em seguida, cada linha de SW alterada via `POST /sw/params`.
 
 ---
 

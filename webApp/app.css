@@ -563,11 +563,11 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
   left: 50%;
   transform: translateX(-50%);
   width: calc(100% - 24px);
-  max-width: 456px;
+  max-width: 496px;
   bottom: 16px;
   z-index: 30;
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr auto;
+  grid-template-columns: 1fr 1fr 1fr auto auto;
   gap: 6px;
   padding: 8px;
   border-radius: 28px;
@@ -575,6 +575,107 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
   border: 1px solid var(--hair-strong);
   backdrop-filter: blur(20px) saturate(140%);
   -webkit-backdrop-filter: blur(20px) saturate(140%);
+}
+/* "+" e seu popup — botao circular do mesmo tamanho do SAVE, abre um
+   menu vertical com COPY PRESET / PASTE PRESET. */
+.bf-tabbar-plus-wrap {
+  position: relative;
+  display: grid;
+  place-items: center;
+}
+.bf-tabbar-plus {
+  appearance: none;
+  border: 1px solid var(--hair-strong);
+  background: var(--card-2);
+  color: var(--text);
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition: background 0.15s ease, color 0.15s ease,
+              border-color 0.15s ease, transform 0.08s ease;
+}
+.bf-tabbar-plus:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.bf-tabbar-plus.is-open {
+  background: var(--accent);
+  color: #1a0e06;
+  border-color: var(--accent);
+}
+.bf-tabbar-plus.is-flash-ok {
+  background: var(--success);
+  color: #0a1a0c;
+  border-color: var(--success);
+}
+.bf-tabbar-plus.is-flash-err {
+  background: var(--danger);
+  color: #fff;
+  border-color: var(--danger);
+}
+.bf-tabbar-plus.is-busy { opacity: 0.65; }
+.bf-tabbar-plus-menu {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  right: 0;
+  min-width: 220px;
+  background: linear-gradient(180deg, #1c1c20 0%, #141418 100%);
+  border: 1px solid var(--hair-strong);
+  border-radius: 14px;
+  padding: 6px;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6),
+              0 0 0 1px rgba(255, 255, 255, 0.04) inset;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  z-index: 31;
+  animation: bf-pop-in-center 0.14s ease;
+}
+.bf-tabbar-plus-item {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-align: left;
+  padding: 10px 12px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.bf-tabbar-plus-item:hover {
+  background: rgba(255, 165, 0, 0.10);
+  color: var(--accent);
+}
+.bf-tabbar-plus-item em {
+  font-style: normal;
+  color: var(--muted);
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  margin-left: auto;
+  font-size: 11px;
+}
+.bf-tabbar-plus-item:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.bf-tabbar-plus-item:disabled:hover {
+  background: transparent;
+  color: var(--text);
+}
+.bf-tabbar-plus-sep {
+  height: 1px;
+  background: var(--hair);
+  margin: 4px 2px;
 }
 .bf-tab {
   appearance: none;
@@ -916,6 +1017,50 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
     linear-gradient(180deg, #2a1a10 0%, #18120e 100%);
 }
 .bf-sw-card-tab .bf-tab-ico { width: 30px; height: 30px; }
+
+/* COPY / PASTE — coluna do mesmo width (52px) que um tab, com 2 botoes
+   empilhados verticalmente, cada um com metade da altura (24px) +
+   2px de gap pra somar 52 (mesma altura visual de um tab). */
+.bf-sw-card-copypaste {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 52px;
+  flex: 0 0 auto;
+}
+.bf-sw-card-cp {
+  appearance: none;
+  width: 52px;
+  height: 25px;
+  border: 1px solid var(--hair);
+  background: linear-gradient(180deg, #1b1b20 0%, #131318 100%);
+  color: var(--text);
+  border-radius: 10px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  box-shadow: 0 0 6px rgba(0, 0, 0, 0.5);
+  transition: border-color 0.15s ease, background 0.15s ease,
+              color 0.15s ease, transform 0.08s ease;
+}
+.bf-sw-card-cp .bf-tab-ico { width: 18px; height: 18px; }
+.bf-sw-card-cp:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.bf-sw-card-cp:active:not(:disabled) { transform: scale(0.96); }
+.bf-sw-card-cp:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.bf-sw-card-cp.is-flash {
+  border-color: var(--success);
+  color: var(--success);
+  background: linear-gradient(180deg, rgba(80, 220, 120, 0.20) 0%,
+                                       rgba(80, 220, 120, 0.06) 100%);
+}
 .bf-sw-card-body {
   /* Vazio por enquanto na aba engrenagem; min-height mantem a forma do
      card enquanto as configs de cada modo nao chegam. */
@@ -997,16 +1142,32 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
 }
 .bf-sw-macros .bf-macros-slot-head {
   display: grid;
-  grid-template-columns: 24px minmax(0, 1.1fr) minmax(0, 1fr);
+  grid-template-columns: 40px minmax(0, 1.1fr) minmax(0, 1fr);
   align-items: center;
   gap: 10px;
 }
-.bf-sw-macros .bf-macros-slot-idx {
+/* Bola branca com numero preto — padrao pra TODOS os indices de slot
+   (MACROS, TAP TEMPO, MOMENTARY). Override scoped (.bf-sw-tap ... )
+   abaixo pra ajustes especificos onde necessario. */
+.bf-macros-slot-idx {
+  align-self: center;
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: linear-gradient(180deg, #ffffff 0%, #d8d8d8 100%);
+  border: 1px solid rgba(0, 0, 0, 0.20);
+  color: #0a0a0c;
   font-family: var(--font-display);
   font-size: 20px;
-  font-weight: 700;
-  color: var(--muted);
+  font-weight: 800;
+  line-height: 1;
+  padding: 0;
   text-align: center;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.45),
+              inset 0 -1px 1px rgba(0, 0, 0, 0.12);
 }
 /* Toggle SEND CC / SEND PC — botao unico que alterna. CC = laranja
    accent (igual is-active do .bf-input-num); PC = azul. Visual diferente
@@ -1049,14 +1210,81 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
 .bf-sw-tap .bf-tap-slot {
   padding: 8px 12px;
 }
+/* Altura padronizada de 36px em TODOS os campos dos editores de SW
+   (todos modos: STOMP, MACROS, SINGLE, MOMENTARY, TAP TEMPO, SPIN, RAMP)
+   pra alinhar com a bola do indice e dar consistencia visual.
+   Atinge selects + inputs (text/number) + botoes-toggle (.bf-input-num
+   que sao botoes de estado tipo START ON / AT_PRESET / CUSTOM / MODE).
+   Os botoes de ACAO (TEST, FIRE, PULSE, TAP, SWEEP, SPIN, FAVORITE)
+   ficam fora porque dividem linha com o LED de 72px — manter altura
+   maior pra equilibrio visual. */
+.bf-sw-fx1 .bf-extras-row:not(.bf-sw-fx1-test) .bf-input,
+.bf-sw-fx2 .bf-extras-row:not(.bf-sw-fx1-test) .bf-input,
+.bf-sw-fx1 .bf-tap-slot-row .bf-input,
+.bf-sw-fx2 .bf-tap-slot-row .bf-input,
+.bf-sw-tap .bf-tap-mode-btn,
+.bf-tap-action {
+  min-height: 36px;
+  height: 36px;
+}
+/* Campos do MACROS slot tinham override de 40px — alinha com 36. */
+.bf-sw-macros .bf-macros-slot-fields .bf-input,
+.bf-sw-macros .bf-macros-slot-fields .bf-select {
+  min-height: 36px;
+  height: 36px;
+}
 .bf-sw-tap .bf-tap-slot-row {
-  grid-template-columns: 28px minmax(0, 1fr) minmax(0, 1fr) auto;
+  grid-template-columns: 40px minmax(0, 1fr) minmax(0, 1fr) auto;
   gap: 10px;
   align-items: end;
 }
+.bf-sw-tap .bf-tap-slot-row.bf-mom-slot-row {
+  grid-template-columns: 40px minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+  align-items: end;
+}
+/* Bola do slot no TAP TEMPO usa o estilo base (.bf-macros-slot-idx),
+   so ajusta alinhamento: como o tap-slot-row tem align-items: end pra
+   alinhar inputs no bottom, a bola tambem precisa ir pro bottom. */
 .bf-sw-tap .bf-tap-slot-row .bf-macros-slot-idx {
   align-self: end;
-  padding-bottom: 8px;
+}
+/* Slot fixo de LONG PRESS — grid de 4 colunas (LP + CC + VAL + Canal),
+   visualmente destacado dos slots de tap. */
+.bf-sw-tap .bf-tap-lp-slot {
+  margin-top: 10px;
+  padding-top: 14px;
+  border-top: 1px dashed rgba(255, 165, 0, 0.30);
+  background: linear-gradient(180deg, rgba(255, 165, 0, 0.04) 0%,
+                                       rgba(255, 140, 0, 0.00) 100%);
+}
+.bf-sw-tap .bf-tap-lp-slot .bf-tap-slot-row {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+}
+.bf-tap-lp-label {
+  color: var(--accent) !important;
+  font-weight: 800;
+  letter-spacing: 0.10em;
+}
+.bf-tap-lp-title {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.22em;
+  color: var(--accent);
+  text-transform: uppercase;
+  margin: 0 0 10px 2px;
+}
+.bf-tap-lp-flags {
+  margin-top: 8px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.bf-tap-lp-flags .bf-input-num {
+  min-height: 36px;
+  font-size: 11px;
 }
 .bf-tap-mode-btn {
   appearance: none;
@@ -1084,6 +1312,202 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
 }
 .bf-tap-mode-btn:active {
   transform: scale(0.97);
+}
+/* SPIN — linha de um VAL: label em cima, [select | barra meter] na
+   linha de baixo (simetricos 50/50), e o fader full-width centralizado
+   embaixo de ambos. */
+.bf-spin-val-row {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 10px 0 14px;
+}
+.bf-spin-val-top {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  align-items: stretch;
+}
+.bf-spin-val-top > .bf-select-wrap { min-width: 0; }
+.bf-spin-val-top .bf-input.bf-select {
+  width: 100%;
+  min-height: 44px;
+  font-size: 16px;
+  font-weight: 700;
+}
+.bf-spin-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  display: block;
+  width: 100%;
+  height: 10px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent), var(--accent-glow, var(--accent)));
+  accent-color: var(--accent);
+  outline: none;
+  cursor: pointer;
+  margin: 4px 0;
+}
+.bf-spin-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: linear-gradient(180deg, #fff 0%, #ddd 100%);
+  border: 2px solid var(--accent);
+  cursor: pointer;
+  box-shadow: 0 0 10px rgba(255, 165, 0, 0.55),
+              0 2px 4px rgba(0, 0, 0, 0.4);
+  transition: transform 0.08s ease;
+}
+.bf-spin-slider::-webkit-slider-thumb:hover { transform: scale(1.08); }
+.bf-spin-slider::-webkit-slider-thumb:active { transform: scale(1.12); }
+.bf-spin-slider::-moz-range-thumb {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: linear-gradient(180deg, #fff 0%, #ddd 100%);
+  border: 2px solid var(--accent);
+  cursor: pointer;
+  box-shadow: 0 0 10px rgba(255, 165, 0, 0.55),
+              0 2px 4px rgba(0, 0, 0, 0.4);
+}
+
+/* Barra horizontal estilo meter — gradient laranja preenche da
+   esquerda; fundo escuro com tick marks; porcentagem no centro. */
+.bf-spin-bar {
+  width: 100%;
+  position: relative;
+  min-height: 44px;
+  border-radius: 10px;
+  background: linear-gradient(180deg, #0f0f12 0%, #1a1a1f 100%);
+  border: 1px solid var(--hair);
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+.bf-spin-bar-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background:
+    linear-gradient(90deg, rgba(0, 0, 0, 0.25) 0%, transparent 30%),
+    linear-gradient(180deg, #ff9d3a 0%, #c45a0a 100%);
+  box-shadow: 0 0 12px rgba(255, 140, 0, 0.45);
+  transition: width 0.12s ease;
+}
+.bf-spin-bar-ticks {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 4px;
+  display: flex;
+  justify-content: space-between;
+  padding: 0 6px;
+  pointer-events: none;
+}
+.bf-spin-bar-tick {
+  width: 1px;
+  height: 5px;
+  background: rgba(255, 255, 255, 0.18);
+}
+.bf-spin-bar-tick.is-major {
+  height: 9px;
+  background: rgba(255, 255, 255, 0.32);
+}
+.bf-spin-bar-text {
+  position: relative;
+  z-index: 1;
+  font-family: var(--font-mono);
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: #fff;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
+}
+
+.bf-spin-val-controls .bf-input.bf-select {
+  font-size: 14px;
+}
+
+/* FAVORITE — picker no estilo da pagina GLOBAL (.bf-seg + .bf-cycle).
+   Stack vertical com toggle BANK/LIVE em cima e os 2 cards grandes
+   (BANK + PRESET) embaixo. */
+.bf-fav-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 4px 0 8px;
+}
+
+/* STOMP — botao FAVORITE com icone de estrela. Ativo: borda+fill em
+   amarelo accent; desligado: outline cinza. Estrela fica antes do label. */
+.bf-fav-btn {
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+.bf-fav-ico {
+  width: 16px;
+  height: 16px;
+  fill: currentColor;
+  stroke: none;
+  flex-shrink: 0;
+  opacity: 0.55;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+.bf-fav-btn.is-active .bf-fav-ico {
+  opacity: 1;
+  filter: drop-shadow(0 0 4px rgba(255, 165, 0, 0.55));
+}
+.bf-fav-btn:hover .bf-fav-ico { opacity: 0.9; transform: scale(1.06); }
+/* Linha "test" do STOMP: MIDI TEST (esconde em FAVORITE) + FAVORITE +
+   LED. Flex faz os 2 botoes dividirem o espaco; LED fica fixo a direita. */
+.bf-stomp-test-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.bf-stomp-test-row > .bf-input-num { flex: 1; min-width: 0; }
+.bf-stomp-test-row > .bf-sw-fx1-led { flex: 0 0 auto; }
+
+/* RAMP — SUBIDA / DESCIDA na mesma linha (grid 1fr 1fr); cada coluna
+   empilha input em cima + fader embaixo. */
+.bf-ramp-time-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin: 10px 0;
+}
+.bf-ramp-time-col {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.bf-ramp-time-col .bf-extras-cell { width: 100%; }
+.bf-ramp-time-col .bf-extras-cell .bf-input { width: 100%; }
+.bf-ramp-time-slider { margin: 2px 0 0; }
+
+/* RAMP — linha de botoes segmented (CURVA / TRIGGER) — divide largura
+   igualmente entre todos os botoes. */
+.bf-ramp-segmented {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: 6px;
+}
+.bf-ramp-segmented .bf-input-num {
+  min-height: 38px;
+  font-size: 11px;
+  padding: 0 6px;
+}
+.bf-sw-ramp .bf-extras-cell input[type="number"] {
+  font-variant-numeric: tabular-nums;
 }
 .bf-tap-mode-btn.is-mode-2 {
   border-color: var(--accent);
@@ -1196,11 +1620,13 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
 }
 .bf-sw-fx2-tabs { margin: 2px 0 0; }
 
-/* Grade dos 10 modos de operacao de SW (aba engrenagem do card) */
+/* Grade dos modos de operacao de SW — chips horizontais compactos,
+   mesmo visual do botao "TAP TEMPO" no header do card (icone a esquerda
+   + label). 2 colunas pra caber no popup. */
 .bf-sw-mode-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 10px;
+  gap: 8px;
 }
 .bf-sw-mode {
   appearance: none;
@@ -1208,38 +1634,42 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
   background: linear-gradient(180deg, #1b1b20 0%, #131318 100%);
   color: var(--text);
   border-radius: 14px;
-  padding: 14px 8px 12px;
+  padding: 16px 14px;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
-  gap: 7px;
+  justify-content: center;
+  gap: 12px;
+  min-height: 64px;
   cursor: pointer;
-  box-shadow: 0 0 8px rgba(0,0,0,0.55), 0 0 18px rgba(0,0,0,0.65);
+  box-shadow: 0 0 6px rgba(0,0,0,0.45);
   transition: border-color 0.15s ease, background 0.15s ease;
+  text-align: center;
 }
 .bf-sw-mode:hover { border-color: var(--hair-strong); }
 .bf-sw-mode.is-active {
   border-color: var(--tile-color, var(--accent));
   background:
-    radial-gradient(120% 80% at 50% 0%, color-mix(in srgb, var(--tile-color, var(--accent)) 32%, transparent) 0%, transparent 70%),
+    radial-gradient(120% 80% at 50% 0%, color-mix(in srgb, var(--tile-color, var(--accent)) 22%, transparent) 0%, transparent 75%),
     linear-gradient(180deg, #2a1a10 0%, #18120e 100%);
 }
-.bf-sw-mode .bf-tab-ico { width: 40px; height: 40px; }
+.bf-sw-mode .bf-tab-ico {
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+}
 .bf-sw-mode-title {
   font-family: var(--font-display);
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 800;
-  letter-spacing: 0.01em;
-  line-height: 1;
+  letter-spacing: 0.04em;
+  line-height: 1.1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.bf-sw-mode-sub {
-  font-family: var(--font-mono);
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  color: var(--faint);
-  text-transform: uppercase;
-}
+/* Subtitulo escondido no chip compacto — title ja basta pra identificar */
+.bf-sw-mode-sub { display: none; }
 
 /* Header do card: campo do modo atual à esquerda dos icones de aba.
    Toque abre o popup de selecao de modo. */
@@ -2475,6 +2905,10 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
 .bf-monitor-ev-msg .bf-msg-type.is-pc {
   background: rgba(58, 160, 255, 0.18);
   color: #3aa0ff;
+}
+.bf-monitor-ev-msg .bf-msg-type.is-fav {
+  background: rgba(255, 215, 0, 0.20);
+  color: #ffd966;
 }
 .bf-monitor-ev-msg .bf-msg-num {
   color: var(--text);
