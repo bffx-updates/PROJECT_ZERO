@@ -198,12 +198,12 @@ import { ESPLoader, Transport } from './esptool-bundle.js';
 //   0x1000   bootloader
 //   0x8000   partition-table
 //   0x10000  app (firmware)
-//   0x310000 storage (LittleFS, 960 KB)
+//   0x280000 storage (LittleFS, 1.5 MB)
 const IMAGES = {
   bootloader: { path: './bootloader.bin',      address: 0x1000 },
   partitions: { path: './partition-table.bin', address: 0x8000 },
   firmware:   { path: './firmware.bin',        address: 0x10000 },
-  littlefs:   { path: './littlefs.bin',        address: 0x310000 },
+  littlefs:   { path: './littlefs.bin',        address: 0x280000 },
 };
 
 // ── Filtros USB ─────────────────────────────────────────────────────

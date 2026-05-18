@@ -946,6 +946,22 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
   box-shadow: 0 0 8px rgba(0,0,0,0.55), 0 0 18px rgba(0,0,0,0.65);
 }
 
+/* LAYER 1 / LAYER 2 — alterna qual conjunto de funcoes de SW esta sendo
+   editado no preset atual. Variante mais discreta do .bf-mode-switch
+   (botoes menores, fonte menor). LAYER 2 desabilitado se globalLayer2
+   estiver OFF. */
+.bf-layer-switch-wrap { margin-top: -8px; }
+.bf-layer-switch { margin-bottom: 14px; }
+.bf-layer-switch button {
+  height: 34px;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+.bf-layer-switch button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 /* Botaozinho redondo entre PRESET MODE e LIVE MODE — alterna sync com a
    controladora. Sobreposto no centro do .bf-mode-switch (z-index acima
    dos dois botoes grandes). Ativo = laranja accent; inativo = mudo. */
@@ -1762,6 +1778,11 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
   justify-content: center;
   padding: 20px;
 }
+.bf-modal-backdrop-strong {
+  background: rgba(0,0,0,0.55);
+  backdrop-filter: blur(14px) saturate(120%);
+  -webkit-backdrop-filter: blur(14px) saturate(120%);
+}
 /* Modal padrao — visual unificado com o popup de cores do LED (mesma
    sheet centralizada, mesmo gradient/raio/sombra/animacao). */
 .bf-modal {
@@ -2282,6 +2303,52 @@ select.bf-input option { background: #141418; color: #f6f6f8; }
 }
 .bf-icon-tabs.cols-4 .bf-icon-tab span {
   font-size: 11px;
+}
+.bf-icon-tabs.cols-5 {
+  /* SYSTEM com USB HOST (MODELO / WI-FI / USB HOST / BACKUP / HARD TEST).
+     5 colunas — fonte menor pra labels longos caberem sem quebrar. */
+  grid-template-columns: repeat(5, 1fr);
+}
+.bf-icon-tabs.cols-5 .bf-icon-tab span {
+  font-size: 10px;
+}
+
+/* Placeholder pra cards "em construcao" — texto centralizado com padding
+   maior que o normal, pra parecer estado vazio em vez de bug. */
+.bf-empty-state {
+  padding: 24px 16px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.bf-empty-state p { margin: 0; }
+
+/* USB Host page — rows label/valor + meta state badges no card-head. */
+.bf-usbhost-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--hair);
+  font-size: 12px;
+}
+.bf-usbhost-row:last-child { border-bottom: none; }
+.bf-usbhost-row .label { color: var(--muted); }
+.bf-usbhost-row .val   {
+  color: var(--text);
+  text-align: right;
+  word-break: break-word;
+}
+.bf-card-head .meta.is-ok  { color: var(--success, #6cd17a); }
+.bf-card-head .meta.is-off { color: var(--muted); }
+.bf-btn.is-warn {
+  border-color: var(--accent, #ff7a00);
+  color: var(--accent, #ff7a00);
+}
+.bf-btn.is-warn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent, #ff7a00) 14%, transparent);
 }
 .bf-icon-tab {
   appearance: none;

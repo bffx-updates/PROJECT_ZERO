@@ -14,7 +14,7 @@ GitHub Pages e o usuário plugga o cabo USB no PC/Mac/Android e clica
 | `bootloader.bin`       | bootloader do ESP-IDF (offset `0x1000`)       |
 | `partition-table.bin`  | tabela de partições (offset `0x8000`)         |
 | `firmware.bin`         | firmware compilado (offset `0x10000`)         |
-| `littlefs.bin`         | imagem LittleFS com o webApp (offset `0x310000`) |
+| `littlefs.bin`         | imagem LittleFS com o webApp (offset `0x280000`) |
 
 A página verifica via HEAD se cada `.bin` existe. Se faltar, a opção
 correspondente fica desabilitada — então dá pra subir só firmware sem
@@ -49,10 +49,10 @@ A imagem é gerada pelo `mklittlefs` que vem com o ESP32 core do Arduino.
    ```
 2. Gere a imagem LittleFS:
    ```
-   mklittlefs -c data -b 4096 -p 256 -s 0xF0000 upload_littlefs/littlefs.bin
+   mklittlefs -c data -b 4096 -p 256 -s 0x180000 upload_littlefs/littlefs.bin
    ```
    Onde:
-   - `-s 0xF0000` é o tamanho da partição storage (960 KB, conforme `partitions.csv`).
+   - `-s 0x180000` é o tamanho da partição storage (1.5 MB, conforme `partitions.csv`).
    - `-b 4096` / `-p 256` são valores padrão do core.
 
 > O caminho do `mklittlefs.exe` em instalações portable do Arduino fica

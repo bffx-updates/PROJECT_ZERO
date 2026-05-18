@@ -670,7 +670,7 @@ function metaToApiBody(meta) {
   return body;
 }
 
-function PresetEditorCard({ tag, onDisplayNameChange, onRegisterSave, savedSwModes, savedSwParams }) {
+function PresetEditorCard({ tag, onDisplayNameChange, onRegisterSave, savedSwModes, savedSwParams, reloadToken }) {
   const [metaByTag, setMetaByTag] = useState({});
   const [savedMetaByTag, setSavedMetaByTag] = useState({});
   const [status, setStatus] = useState('idle'); // idle | loading | saving | saved | error
@@ -682,7 +682,9 @@ function PresetEditorCard({ tag, onDisplayNameChange, onRegisterSave, savedSwMod
     : false;
 
   // Carrega meta do firmware ao trocar de tag (uma vez por tag). Usa
-  // apiCall (HTTP ou USB conforme transporte ativo).
+  // apiCall (HTTP ou USB conforme transporte ativo). reloadToken bumpa
+  // depois de PASTE PRESET/BANK pra invalidar o cache e re-buscar — sem
+  // isso o cache stale faz o SAVE do rodape sobrescrever o paste.
   useEffect(() => {
     if (metaByTag[tag] || (!DEVICE_API && !_transport.usbConnected)) return;
     let cancelled = false;
@@ -701,6 +703,18 @@ function PresetEditorCard({ tag, onDisplayNameChange, onRegisterSave, savedSwMod
     })();
     return () => { cancelled = true; };
   }, [tag, metaByTag]);
+
+  // Invalida o cache de meta do tag corrente quando reloadToken bumpa
+  // (paste preset/bank). O useEffect acima entao re-busca do firmware.
+  useEffect(() => {
+    if (!reloadToken) return;
+    setMetaByTag((prev) => {
+      if (!(tag in prev)) return prev;
+      const next = { ...prev };
+      delete next[tag];
+      return next;
+    });
+  }, [reloadToken, tag]);
 
   const savePreset = useCallback(async () => {
     if ((!DEVICE_API && !_transport.usbConnected) || !metaByTag[tag]) return;
@@ -1358,10 +1372,10 @@ function parseSwDisplayOne(blob) {
 // Extrai sw_display dos 6 SWs do meta retornado pela API. Cada entry vem
 // como string compacta na chave swdispN. Sempre retorna 6 entries com
 // defaults se faltar algum.
-function parseSwDisplayFromMeta(rawMeta) {
+function parseSwDisplayFromMeta(rawMeta, layerSuffix = '') {
   const out = {};
   for (let sw = 1; sw <= 6; sw++) {
-    const blob = (rawMeta && rawMeta['swdisp' + sw]) || '';
+    const blob = (rawMeta && rawMeta['swdisp' + sw + layerSuffix]) || '';
     out[sw] = parseSwDisplayOne(blob);
   }
   return out;
@@ -1426,10 +1440,11 @@ function serializeSwDisplayOne(d) {
   return parts.join(';');
 }
 
-// Insere os 6 swdispN no body de POST /bank/preset.
-function swDisplayToApiBody(disp, body) {
+// Insere os 6 swdispN[L2] no body de POST /bank/preset. layerSuffix = ''
+// (L1) ou 'L2' — define o sufixo das chaves enviadas.
+function swDisplayToApiBody(disp, body, layerSuffix = '') {
   for (let sw = 1; sw <= 6; sw++) {
-    body.set('swdisp' + sw,
+    body.set('swdisp' + sw + layerSuffix,
              serializeSwDisplayOne(disp && disp[sw]));
   }
 }
@@ -1784,14 +1799,21 @@ function DEFAULT_SW_PARAMS(modeId) {
 // Parseia o objeto sw_params da API ({"sw1.fx1":"type=0|num=48|..."}) pro
 // shape { [sw]: { [modeId]: {campos numericos} } }. Campos ausentes caem
 // no default do modo.
-function parseSwParamsObj(obj) {
-  const out = {};
-  if (!obj || typeof obj !== 'object') return out;
+// Parseia a resposta de /sw/params em 2 mapas {sw -> modo -> fields},
+// um por layer. Bucketa por sufixo da chave: `sw1.fx1` -> L1[1].fx1;
+// `sw1L2.spin` -> L2[1].spin. Retorna { l1, l2 }. Helper antigo
+// (parseSwParamsObj) eh wrapper sobre este e retorna so o L1 — preserva
+// callers que ainda nao foram migrados.
+function parseSwParamsObjByLayer(obj) {
+  const l1 = {};
+  const l2 = {};
+  if (!obj || typeof obj !== 'object') return { l1, l2 };
   for (const key of Object.keys(obj)) {
-    const m = /^sw([1-6])\.(.+)$/.exec(key);
+    const m = /^sw([1-6])(L2)?\.(.+)$/.exec(key);
     if (!m) continue;
     const sw = parseInt(m[1], 10);
-    const modeId = m[2];
+    const target = m[2] === 'L2' ? l2 : l1;
+    const modeId = m[3];
     const fields = { ...DEFAULT_SW_PARAMS(modeId) };
     const blob = obj[key] || '';
     for (const pair of String(blob).split('|')) {
@@ -1809,10 +1831,16 @@ function parseSwParamsObj(obj) {
         if (k && Number.isFinite(v)) fields[k] = v;
       }
     }
-    if (!out[sw]) out[sw] = {};
-    out[sw][modeId] = fields;
+    if (!target[sw]) target[sw] = {};
+    target[sw][modeId] = fields;
   }
-  return out;
+  return { l1, l2 };
+}
+
+// Compat: retorna so o L1. Callers que precisam de L2 usam
+// parseSwParamsObjByLayer e bucketam explicitamente.
+function parseSwParamsObj(obj) {
+  return parseSwParamsObjByLayer(obj).l1;
 }
 
 // Serializa os campos de um SW/modo no body de POST /sw/params.
@@ -2353,12 +2381,16 @@ function SwFx1EditorLegacy({ sw, params, onChange, ledPreviewLive, liveOn }) {
     }
     try { await apiCall('POST', '/midi/cc', body); } catch {/* preview/offline */}
   };
-  // Preview do LED (FootswitchArc): ligado -> 3 arcos acesos. Desligado:
-  // se o LED PREVIEW LIVE MODE estiver ON, so o arco de baixo aceso
-  // (espelha o firmware, que mantem so o pixel central); se estiver OFF,
-  // atenua o conjunto todo.
-  const ledLitArcs = (!testOn && ledPreviewLive) ? [0] : undefined;
-  const ledDimmed = !testOn && !ledPreviewLive;
+  // Preview do LED (FootswitchArc): reflete o estado INICIAL salvo. Com
+  // START ON (params.start === 1) o LED entra ACESO na chamada do preset —
+  // mostra os 3 arcos acesos. START OFF: se LED PREVIEW LIVE MODE estiver
+  // ON, so o arco de baixo aceso (espelha o firmware, que mantem so o
+  // pixel central); senao, atenua o conjunto todo. testOn (legado) ainda
+  // permite forcar aceso caso algum caller passe.
+  const startOn = Number(params.start) === 1;
+  const isOn = testOn || startOn;
+  const ledLitArcs = (!isOn && ledPreviewLive) ? [0] : undefined;
+  const ledDimmed = !isOn && !ledPreviewLive;
   return (
     <div className="bf-sw-fx1">
       <div className="bf-extras-row">
@@ -2448,15 +2480,6 @@ function SwFx1EditorLegacy({ sw, params, onChange, ledPreviewLive, liveOn }) {
         </div>
       )}
       <div className="bf-extras-row bf-sw-fx1-test">
-        <button
-          type="button"
-          className={'bf-input bf-input-num' + (testOn ? ' is-active' : '')}
-          onClick={midiTest}
-          aria-pressed={testOn}
-          aria-label="MIDI TEST — dispara o CC do STOMP e alterna on/off"
-        >
-          MIDI TEST
-        </button>
         <div className={'bf-sw-fx1-led' + (ledDimmed ? ' is-off' : '')}>
           <FootswitchArc
             label="LED"
@@ -2527,10 +2550,14 @@ function SwStompSection({ sw, section, label, litArcsOn,
     }
     try { await apiCall('POST', '/midi/cc', body); } catch {/* preview/offline */}
   };
-  // Preview do LED (FootswitchArc): testOn acende os arcos definidos em
-  // `litArcsOn` (o parent decide o mapeamento conforme o modo); testOff
-  // apaga tudo. Sem preview-live (espelha o firmware, ver LED_STRIP.h).
-  const ledLitArcs = testOn ? (litArcsOn || []) : [];
+  // Preview do LED (FootswitchArc): reflete o estado INICIAL salvo da
+  // secao. START ON (chave start/start2/start3 conforme a secao) -> acende
+  // os arcos definidos em `litArcsOn` (o parent decide o mapeamento
+  // conforme o modo/tier). testOn (legado) tambem forca aceso.
+  const startKey = section === 0 ? 'start' : section === 1 ? 'start2' : 'start3';
+  const startOn = Number((params || {})[startKey]) === 1;
+  const isOn = testOn || startOn;
+  const ledLitArcs = isOn ? (litArcsOn || []) : [];
   const ledDimmed = false;
   return (
     <div className="bf-sw-fx1">
@@ -2683,17 +2710,6 @@ function SwStompSection({ sw, section, label, litArcsOn,
         </div>
       )}
       <div className="bf-extras-row bf-sw-fx1-test bf-stomp-test-row">
-        {!isFav && (
-          <button
-            type="button"
-            className={'bf-input bf-input-num' + (testOn ? ' is-active' : '')}
-            onClick={midiTest}
-            aria-pressed={testOn}
-            aria-label="MIDI TEST — dispara o CC do STOMP e alterna on/off"
-          >
-            MIDI TEST
-          </button>
-        )}
         <button
           type="button"
           className={'bf-input bf-input-num bf-fav-btn' +
@@ -3002,7 +3018,10 @@ function SwMacrosSection({ sw, section, label, litArcsOn,
     }
   };
 
-  const ledLitArcs = testOn ? (litArcsOn || []) : [];
+  // MACROS reflete startOn salvo — START ON => LED aceso na chamada do
+  // preset. testOn (legado) mantem para callers que ainda passem.
+  const isOn = testOn || startOn;
+  const ledLitArcs = isOn ? (litArcsOn || []) : [];
   const ledDimmed = false;
 
   return (
@@ -3069,15 +3088,6 @@ function SwMacrosSection({ sw, section, label, litArcsOn,
         </button>
       </div>
       <div className="bf-extras-row bf-sw-fx1-test">
-        <button
-          type="button"
-          className={'bf-input bf-input-num' + (testOn ? ' is-active' : '')}
-          onClick={fireSection}
-          aria-pressed={testOn}
-          aria-label="FIRE — dispara os 4 slots desta secao"
-        >
-          FIRE
-        </button>
         <div className={'bf-sw-fx1-led' + (ledDimmed ? ' is-off' : '')}>
           <FootswitchArc
             label="LED"
@@ -3516,16 +3526,8 @@ function SwSpinEditor({ sw, params, onChange, ledPreviewLive }) {
         </button>
       </div>
 
-      {/* SPIN test + LED */}
+      {/* SPIN LED preview */}
       <div className="bf-extras-row bf-sw-fx1-test">
-        <button
-          type="button"
-          className="bf-input bf-input-num"
-          onClick={fireTest}
-          aria-label="SPIN test — cicla estados 1/2/3 e dispara o valor"
-        >
-          SPIN
-        </button>
         <div className="bf-sw-fx1-led">
           <FootswitchArc
             label="LED"
@@ -3864,14 +3866,6 @@ function SwTapTempoEditor({ sw, params, onChange, ledPreviewLive }) {
       </div>
 
       <div className="bf-extras-row bf-sw-fx1-test">
-        <button
-          type="button"
-          className={'bf-input bf-input-num' + (testFired ? ' is-active' : '')}
-          onClick={fireTap}
-          aria-label="TAP — dispara todos os slots (simula um press)"
-        >
-          TAP
-        </button>
         <div className={'bf-sw-fx1-led' + (ledDimmed ? ' is-off' : '')}>
           <FootswitchArc
             label="LED"
@@ -4120,14 +4114,6 @@ function SwSingleEditor({ sw, params, onChange, ledPreviewLive, isActiveSingle }
         </button>
       </div>
       <div className="bf-extras-row bf-sw-fx1-test">
-        <button
-          type="button"
-          className={'bf-input bf-input-num' + (testFired ? ' is-active' : '')}
-          onClick={fireTest}
-          aria-label="FIRE — dispara todos os slots configurados"
-        >
-          FIRE
-        </button>
         <div className={'bf-sw-fx1-led' + (ledDimmed ? ' is-off' : '')}>
           <FootswitchArc
             label="LED"
@@ -4488,6 +4474,10 @@ function SwDisplayStompEditor({ sw, disp, onChange, swParams }) {
   const subOn  = isMain ? null : stomp[subBase + 1];
 
   // Le um campo do estado atual (off ou on) da secao ativa.
+  // icon_id e mode sao COMPARTILHADOS entre OFF/ON (1 icone por secao);
+  // sempre lemos do slot OFF como canonico. Cores (ic/bg/br) variam por
+  // estado. Em presets legados onde os 2 slots tinham icones diferentes,
+  // mostramos o OFF — alteracao subsequente sincroniza ambos.
   const getField = (field, on) => {
     if (isMain) {
       if (field === 'icon_id') return disp.icon_id;
@@ -4496,10 +4486,10 @@ function SwDisplayStompEditor({ sw, disp, onChange, swParams }) {
       if (field === 'bg') return on ? disp.bg_on : disp.bg_off;
       if (field === 'br') return on ? disp.br_on : disp.br_off;
     }
+    if (field === 'icon_id') return (subOff && subOff.icon_id) || 1;
+    if (field === 'mode')    return (subOff && subOff.mode) || 'icon';
     const sub = on ? subOn : subOff;
     if (!sub) return null;
-    if (field === 'icon_id') return sub.icon_id;
-    if (field === 'mode') return sub.mode || 'icon';
     return sub[field];
   };
 
@@ -4520,10 +4510,34 @@ function SwDisplayStompEditor({ sw, disp, onChange, swParams }) {
       }
       onChange({ ...disp, ...mapped });
     } else {
-      const idx = subBase + (on ? 1 : 0);
-      const next = stomp.map((s, i) => i === idx
-        ? { ...DEFAULT_SW_STOMP_SUB(), ...s, ...patch }
-        : s);
+      // Sub-secao B/C: idx 0/2 = OFF, idx 1/3 = ON. icon_id/mode sao
+      // COMPARTILHADOS entre os 2 estados (1 icone por secao); so
+      // cores (ic/bg/br) diferem entre OFF/ON. Sem isso, mudar o
+      // icone com PREVIEW ON gravava num slot e PREVIEW OFF noutro,
+      // efetivamente permitindo 2 icones por secao — bug.
+      const offIdx = subBase;
+      const onIdx  = subBase + 1;
+      const shared = {};
+      const stateOnly = {};
+      for (const [k, v] of Object.entries(patch)) {
+        if (k === 'icon_id' || k === 'mode') shared[k] = v;
+        else stateOnly[k] = v;
+      }
+      const next = stomp.map((s, i) => {
+        if (i === offIdx) {
+          // OFF: aplica shared (icon/mode) sempre + stateOnly so se on=false
+          return on
+            ? { ...DEFAULT_SW_STOMP_SUB(), ...s, ...shared }
+            : { ...DEFAULT_SW_STOMP_SUB(), ...s, ...shared, ...stateOnly };
+        }
+        if (i === onIdx) {
+          // ON: aplica shared sempre + stateOnly so se on=true
+          return on
+            ? { ...DEFAULT_SW_STOMP_SUB(), ...s, ...shared, ...stateOnly }
+            : { ...DEFAULT_SW_STOMP_SUB(), ...s, ...shared };
+        }
+        return s;
+      });
       onChange({ ...disp, stomp: next });
     }
   };
@@ -4922,8 +4936,11 @@ function LiveModePanel({ presetCount, swModes, onSetSwMode, swParams, onSetSwPar
   const [selectedSw, setSelectedSw] = useState(null);  // 1..N ou null
   const [cardTab, setCardTab] = useState('gear');      // 'gear' | 'display'
   const [pickerOpen, setPickerOpen] = useState(false); // popup de selecao de modo
-  // Clipboard pra COPY/PASTE entre SWs — { modeId, params } do SW copiado.
-  // Vive enquanto a pagina LIVE estiver aberta; perdido ao trocar de page.
+  // Clipboard pra COPY/PASTE entre SWs — { modeId, params, display } do SW
+  // copiado. `display` carrega TUDO do visual (icon_id, mode text/icon,
+  // sigla, cores ic_off/on, bg_off/on, br_off/on + sub-configs spin/stomp/
+  // tap). Vive enquanto a pagina LIVE estiver aberta; perdido ao trocar de
+  // page.
   const [swClipboard, setSwClipboard] = useState(null);
   const [copyFlash, setCopyFlash] = useState(false);
   const switches = Array.from({ length: presetCount }, (_, i) => i + 1);
@@ -4932,7 +4949,8 @@ function LiveModePanel({ presetCount, swModes, onSetSwMode, swParams, onSetSwPar
   // foi salvo ainda.
   const modeOf = (n) => swModes[n] || 'mute';
 
-  // Copia modo + params do SW selecionado pro clipboard interno.
+  // Copia modo + params + DISPLAY (icone, cores, sigla, sub-configs) do
+  // SW selecionado pro clipboard interno.
   const copyFromSelected = () => {
     if (selectedSw === null) return;
     const modeId = modeOf(selectedSw);
@@ -4940,18 +4958,32 @@ function LiveModePanel({ presetCount, swModes, onSetSwMode, swParams, onSetSwPar
     const params = (swParams && swParams[selectedSw] && swParams[selectedSw][modeId])
       ? swParams[selectedSw][modeId]
       : DEFAULT_SW_PARAMS(modeId);
+    const display = (swDisplay && swDisplay[selectedSw])
+      ? swDisplay[selectedSw]
+      : DEFAULT_SW_DISPLAY();
     // Clona profundo pra desacoplar do state vivo do SW de origem.
-    setSwClipboard({ modeId, params: JSON.parse(JSON.stringify(params)) });
+    setSwClipboard({
+      modeId,
+      params:  JSON.parse(JSON.stringify(params)),
+      display: JSON.parse(JSON.stringify(display)),
+    });
     setCopyFlash(true);
     setTimeout(() => setCopyFlash(false), 800);
   };
 
-  // Cola o clipboard no SW selecionado (troca modo + sobrescreve params).
+  // Cola o clipboard no SW selecionado: troca modo + sobrescreve params
+  // + sobrescreve display (icone + cores + sigla + sub-configs). Clipboard
+  // legado (sem `display`) cai no caminho seguro: nao mexe no display do
+  // destino (preserva o atual em vez de zerar).
   const pasteIntoSelected = () => {
     if (selectedSw === null || !swClipboard) return;
     onSetSwMode(selectedSw, swClipboard.modeId);
     onSetSwParam(selectedSw, swClipboard.modeId,
       JSON.parse(JSON.stringify(swClipboard.params)));
+    if (swClipboard.display && onSetSwDisplay) {
+      onSetSwDisplay(selectedSw,
+        JSON.parse(JSON.stringify(swClipboard.display)));
+    }
   };
 
   const selectSw = (n) => {
@@ -5254,6 +5286,8 @@ function PagePresetConfig({
   swDisplay, onSetSwDisplay,
   liveEvents, monitorEntry,
   ledPreviewLive,
+  editorLayer, onSetEditorLayer, layer2Enabled,
+  presetReloadToken,
 }) {
   const letters = ['A', 'B', 'C', 'D', 'E'];
   const tag = `${letters[bankLetterIndex]}${presetNumber}`;
@@ -5342,13 +5376,36 @@ function PagePresetConfig({
         </button>
       </div>
 
+      {/* LAYER 1 / LAYER 2 — escolhe qual conjunto de funcoes (modo + params
+          + display por SW) esta sendo editado. So habilitado quando o
+          usuario ligou Layer 2 no GLOBAL > LEDS. Botao tambem envia POST
+          /live/layer pro device espelhar (util pra testar L2 sem pisar
+          no LIVE_MODE_PIN). */}
+      <div className="bf-mode-switch-wrap bf-layer-switch-wrap">
+        <div className="bf-seg bf-mode-switch bf-layer-switch">
+          <button
+            className={editorLayer === 1 ? 'is-active' : ''}
+            onClick={() => onSetEditorLayer && onSetEditorLayer(1)}
+            title="Edita o conjunto de funcoes do Layer 1 (sempre disponivel)"
+          >LAYER 1</button>
+          <button
+            className={editorLayer === 2 ? 'is-active' : ''}
+            onClick={() => layer2Enabled && onSetEditorLayer && onSetEditorLayer(2)}
+            disabled={!layer2Enabled}
+            title={layer2Enabled
+              ? 'Edita o conjunto de funcoes do Layer 2'
+              : 'Layer 2 desligado — habilite em GLOBAL > LEDS'}
+          >LAYER 2</button>
+        </div>
+      </div>
+
       {switchMode === 'live'
         ? <LiveModePanel presetCount={presetCount} swModes={swModes} onSetSwMode={onSetSwMode}
             swParams={swParams} onSetSwParam={onSetSwParam} ledPreviewLive={ledPreviewLive}
             swLiveOn={swLiveOn} lastSingleSw={lastSingleSw}
             swSpinState={swSpinState}
             swDisplay={swDisplay} onSetSwDisplay={onSetSwDisplay} />
-        : <PresetEditorCard tag={tag} onDisplayNameChange={onDisplayNameChange} onRegisterSave={onRegisterPresetSave} savedSwModes={savedSwModes} savedSwParams={savedSwParams} />}
+        : <PresetEditorCard tag={tag} onDisplayNameChange={onDisplayNameChange} onRegisterSave={onRegisterPresetSave} savedSwModes={savedSwModes} savedSwParams={savedSwParams} reloadToken={presetReloadToken} />}
 
       {showMonitor && (
         <MonitorView switchMode={switchMode}
@@ -5645,6 +5702,9 @@ function PageGlobalConfig({
   letterLedColors, setLetterLedColors,
   switchLedColors, setSwitchLedColors,
   ledPreviewLive, setLedPreviewLive,
+  liveLedColor, setLiveLedColor,
+  layer2LedColor, setLayer2LedColor,
+  layer2Enabled, setLayer2Enabled,
   gigView, setGigView,
   liveLayout, setLiveLayout,
   presetCount,
@@ -5798,6 +5858,11 @@ function PageGlobalConfig({
                 onClick={() => setLiveLayout(3)}
                 title="Faixa do preset no topo + 1x6 tiles 70x70"
               >LAYOUT 3</button>
+              <button
+                className={liveLayout === 4 ? 'is-active' : ''}
+                onClick={() => setLiveLayout(4)}
+                title="Faixa do preset no topo + 2x6 tiles 70x70 (L1 em cima, L2 embaixo)"
+              >LAYOUT 4</button>
             </div>
           </div>
         </>
@@ -5873,6 +5938,39 @@ function PageGlobalConfig({
             <p style={{ fontSize: 12, color: 'var(--muted)', margin: '14px 4px 0', lineHeight: 1.4 }}>
               Com ON, em LIVE MODE um SW STOMP desligado mantém só o pixel central
               aceso (em vez de apagar os 3). OFF = comportamento padrão.
+            </p>
+          </div>
+
+          <div className="bf-card">
+            <div className="bf-card-head">
+              <h3>LEDS Dedicados</h3>
+              <span className="meta">MODO LIVE &amp; LAYER 2</span>
+            </div>
+            <div className="bf-fsw-grid">
+              <FootswitchArc
+                label="MODO LIVE"
+                colorId={liveLedColor}
+                onChange={setLiveLedColor}
+              />
+              <FootswitchArc
+                label="LAYER 2"
+                colorId={layer2LedColor}
+                onChange={setLayer2LedColor}
+              />
+            </div>
+            <div style={{ height: 14 }} />
+            <div className="bf-auto-row">
+              <span className="label">Ativar Layer 2</span>
+              <button
+                className={'bf-switch is-accent' + (layer2Enabled ? ' is-on' : '')}
+                onClick={() => setLayer2Enabled(!layer2Enabled)}
+                aria-label="Ativar Layer 2"
+                aria-pressed={layer2Enabled}
+              />
+            </div>
+            <p style={{ fontSize: 12, color: 'var(--muted)', margin: '14px 4px 0', lineHeight: 1.4 }}>
+              MODO LIVE: cor do LED do footswitch dedicado (placas com foot+LED próprio para live).
+              LAYER 2: cor indicadora quando o Layer 2 estiver ativo.
             </p>
           </div>
         </>
@@ -5954,7 +6052,7 @@ function PageGlobalConfig({
 // ─── ERASE DATA (destrutivo) ───────────────────────────────────────
 // Zera presets ou config global aos defaults. Cada acao tem confirmacao
 // porque nao tem undo (a menos que o usuario tenha um backup recente).
-function EraseDataCard() {
+function EraseDataCard({ onErased }) {
   const [busy, setBusy] = useState(null);  // 'presets' | 'global' | null
   const [msg, setMsg] = useState('');
 
@@ -5968,12 +6066,16 @@ function EraseDataCard() {
     try {
       await apiCall('POST', `/erase/${target}`);
       setMsg(`${label} apagado(s) com sucesso.`);
+      // Forca o App a re-fetchar tudo — sem isso, o editor segue
+      // mostrando os modos/params/displays antigos em cache local
+      // (firmware ja apagou, mas a UI nao sabe).
+      if (onErased) onErased(target);
     } catch (e) {
       setMsg('Falha: ' + e.message);
     } finally {
       setBusy(null);
     }
-  }, []);
+  }, [onErased]);
 
   return (
     <div className="bf-card" style={{ marginTop: 14 }}>
@@ -6326,11 +6428,23 @@ function PageSystemConfig({
   model, setModel,
   wifiStatus, wifiNetworks, wifiSsid, setWifiSsid,
   wifiPassword, setWifiPassword, wifiState,
-  onWifiScan, onWifiConnect, onWifiDisconnect,
+  onWifiScan, onWifiConnect,
   deviceState, usbState, onToggleUsb,
   connectionMode, onToggleConnectionMode,
+  usbHostStatus, usbHostBusy,
+  onUsbHostLoad, onUsbHostRefresh, onUsbHostSetMode,
+  onUsbHostToggleBle, onUsbHostSetFilter, onUsbHostEnterUpdate,
+  onErased,
 }) {
   const [section, setSection] = useState('model');
+
+  // Poll do status do USB Host enquanto a aba estiver aberta. Ciclo 2s.
+  useEffect(() => {
+    if (section !== 'usbhost' || !onUsbHostLoad) return;
+    onUsbHostLoad();
+    const id = setInterval(() => { onUsbHostLoad(); }, 2000);
+    return () => clearInterval(id);
+  }, [section, onUsbHostLoad]);
   const [family, variant] = (() => {
     const idx = model.indexOf(' ');
     return idx === -1 ? [model, ''] : [model.slice(0, idx), model.slice(idx + 1)];
@@ -6348,7 +6462,7 @@ function PageSystemConfig({
         connectionMode={connectionMode}
         onToggleConnectionMode={onToggleConnectionMode}
       />
-      <div className="bf-icon-tabs cols-4">
+      <div className="bf-icon-tabs cols-5">
           <button className={'bf-icon-tab' + (section === 'model' ? ' is-on' : '')} onClick={() => setSection('model')}>
             <svg viewBox="0 0 24 24" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               {/* Chip/MCU: corpo grande (14x14) + 2 pinos longos em cada lado + core dot */}
@@ -6370,6 +6484,21 @@ function PageSystemConfig({
               <circle className="bf-tab-dot" cx="12" cy="21" r="1.5" />
             </svg>
             <span>WI‑FI</span>
+          </button>
+          <button className={'bf-icon-tab' + (section === 'usbhost' ? ' is-on' : '')} onClick={() => setSection('usbhost')}>
+            <svg viewBox="0 0 24 24" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              {/* USB HOST: simbolo USB classico (tridente) — circulo no
+                  ponto inicial + 3 ramos terminando em circulo, quadrado
+                  e seta */}
+              <circle className="bf-tab-dot" cx="12" cy="20" r="1.6" />
+              <path className="bf-tab-shape" d="M12 20V4" />
+              <path className="bf-tab-line" d="M12 4l-2.5 3 5 0z" />
+              <path className="bf-tab-shape" d="M12 14l-4-3v-2" />
+              <rect className="bf-tab-dot" x="6" y="6.5" width="4" height="3" />
+              <path className="bf-tab-shape" d="M12 10l4 3v3" />
+              <circle className="bf-tab-dot" cx="16" cy="16.5" r="1.6" />
+            </svg>
+            <span>USB HOST</span>
           </button>
           <button className={'bf-icon-tab' + (section === 'backup' ? ' is-on' : '')} onClick={() => setSection('backup')}>
             <svg viewBox="0 0 24 24" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -6438,15 +6567,11 @@ function PageSystemConfig({
                 </svg>
               </div>
               <div className="ssid">
-                <b>{wifiConnected ? (wifiStatus.sta_ssid || wifiSsid) : 'Desconectado'}</b>
+                <b>{wifiConnected ? (wifiStatus.sta_ssid || wifiSsid) : 'Apenas AP'}</b>
                 <span>{wifiConnected
-                  ? `STA · ${wifiStatus.sta_ip || '—'}`
-                  : `Apenas modo AP · ${(wifiStatus && wifiStatus.ap_ip) || '192.168.4.1'}`}</span>
+                  ? `STA conectado · ${wifiStatus.sta_ip || '—'}`
+                  : `${(wifiStatus && wifiStatus.ap_ip) || '192.168.4.1'}`}</span>
               </div>
-              <button
-                className={'bf-switch is-accent' + (wifiConnected ? ' is-on' : '')}
-                onClick={() => (wifiConnected ? onWifiDisconnect() : onWifiConnect())}
-              />
             </div>
 
             <div className="bf-input-stack">
@@ -6481,7 +6606,7 @@ function PageSystemConfig({
               />
             </div>
 
-            <div className="bf-actions" style={{ gridTemplateColumns: '1fr 1fr 1fr' }}>
+            <div className="bf-actions" style={{ gridTemplateColumns: '1fr 1fr' }}>
               <button className="bf-btn" onClick={onWifiScan} disabled={wifiState === 'scanning'}>
                 {wifiState === 'scanning' ? '…' : 'SCAN'}
               </button>
@@ -6492,7 +6617,6 @@ function PageSystemConfig({
               >
                 {wifiState === 'connecting' ? '…' : wifiState === 'connected' ? 'OK' : 'CONNECT'}
               </button>
-              <button className="bf-btn" onClick={onWifiDisconnect} disabled={wifiState === 'disconnecting'}>FORGET</button>
             </div>
           </div>
 
@@ -6536,10 +6660,153 @@ function PageSystemConfig({
         </>
       )}
 
+      {section === 'usbhost' && (() => {
+        const s = usbHostStatus || {};
+        const online = !!s.online;
+        const protocolOk = !!s.protocol_ok;
+        // Mode: 0=TONEX ONE, 1=USB HOST. (BLE eh toggle independente.)
+        const mode = Number(s.mode ?? 0);
+        const pendingMode = Number(s.pending_mode ?? -1);
+        const bleEnabled = !!s.ble_enabled;
+        const bleConnected = !!s.ble_connected;
+        const pendingBle = Number(s.pending_ble ?? -1);
+        const filterCh = Number(s.midi_filter_channel ?? 0);
+        const pendingFilter = Number(s.pending_filter ?? -1);
+        const ageS = s.last_seen_ms ? Math.round(s.last_seen_ms / 1000) : null;
+        return (
+          <>
+            <div className="bf-card">
+              <div className="bf-card-head">
+                <h3>USB Host</h3>
+                <span className={'meta ' + (online ? 'is-ok' : 'is-off')}>
+                  {online ? 'ONLINE' : protocolOk ? 'OFFLINE' : 'AGUARDANDO'}
+                </span>
+              </div>
+              <div className="bf-usbhost-row">
+                <span className="label">Fabricante</span>
+                <span className="val">{s.manufacturer || '—'}</span>
+              </div>
+              <div className="bf-usbhost-row">
+                <span className="label">Produto</span>
+                <span className="val">{s.product || '—'}</span>
+              </div>
+              <div className="bf-usbhost-row">
+                <span className="label">Status</span>
+                <span className="val">{s.status_text || '—'}</span>
+              </div>
+              {ageS !== null && (
+                <div className="bf-usbhost-row">
+                  <span className="label">Ultimo frame</span>
+                  <span className="val">{ageS}s atras</span>
+                </div>
+              )}
+              <div style={{ height: 8 }} />
+              <button
+                type="button"
+                className="bf-btn"
+                onClick={onUsbHostRefresh}
+                disabled={usbHostBusy}
+              >ATUALIZAR</button>
+            </div>
+
+            <div className="bf-card">
+              <div className="bf-card-head">
+                <h3>Modo</h3>
+                <span className="meta">{s.mode_label || '—'}</span>
+              </div>
+              <div className="bf-seg">
+                <button
+                  className={mode === 0 ? 'is-active' : ''}
+                  disabled={usbHostBusy || pendingMode !== -1}
+                  onClick={() => onUsbHostSetMode && onUsbHostSetMode(0)}
+                  title="TONEX ONE — protocolo dedicado pro IK Tonex One"
+                >TONEX ONE</button>
+                <button
+                  className={mode === 1 ? 'is-active' : ''}
+                  disabled={usbHostBusy || pendingMode !== -1}
+                  onClick={() => onUsbHostSetMode && onUsbHostSetMode(1)}
+                  title="USB HOST generico — outros pedais USB MIDI"
+                >USB HOST</button>
+              </div>
+              {pendingMode !== -1 && (
+                <p className="bf-hint">Trocando para
+                  {' '}<b>{pendingMode === 0 ? 'TONEX ONE' : 'USB HOST'}</b>…
+                </p>
+              )}
+            </div>
+
+            <div className="bf-card">
+              <div className="bf-card-head">
+                <h3>BLE MIDI</h3>
+                <span className={'meta ' + (bleConnected ? 'is-ok' : '')}>
+                  {bleEnabled
+                    ? (bleConnected ? 'CONECTADO' : 'AGUARDANDO')
+                    : 'DESLIGADO'}
+                </span>
+              </div>
+              <div className="bf-auto-row">
+                <span className="label">Ativar BLE MIDI</span>
+                <button
+                  className={'bf-switch is-accent' + (bleEnabled ? ' is-on' : '')}
+                  onClick={() => onUsbHostToggleBle && onUsbHostToggleBle(!bleEnabled)}
+                  disabled={usbHostBusy || pendingBle !== -1}
+                  aria-pressed={bleEnabled}
+                />
+              </div>
+              {pendingBle !== -1 && (
+                <p className="bf-hint">
+                  {pendingBle ? 'Ligando' : 'Desligando'} BLE MIDI…
+                </p>
+              )}
+            </div>
+
+            <div className="bf-card">
+              <div className="bf-card-head">
+                <h3>Filtro MIDI</h3>
+                <span className="meta">CH {filterCh === 0 ? 'OMNI' : filterCh}</span>
+              </div>
+              <div className="bf-input-stack">
+                <span className="bf-input-label">Canal do filtro (0 = OMNI; 1..16 = so esse canal)</span>
+                <select
+                  className="bf-input is-focus"
+                  style={{ appearance: 'none', WebkitAppearance: 'none', background: 'var(--card-2)' }}
+                  value={filterCh}
+                  disabled={usbHostBusy || pendingFilter !== -1}
+                  onChange={(e) => onUsbHostSetFilter && onUsbHostSetFilter(Number(e.target.value))}
+                >
+                  <option value={0}>OMNI (todos os canais)</option>
+                  {Array.from({ length: 16 }, (_, i) => i + 1).map((n) => (
+                    <option key={n} value={n}>Canal {n}</option>
+                  ))}
+                </select>
+              </div>
+              {pendingFilter !== -1 && (
+                <p className="bf-hint">Aplicando filtro
+                  {' '}<b>{pendingFilter === 0 ? 'OMNI' : `CH ${pendingFilter}`}</b>…
+                </p>
+              )}
+            </div>
+
+            <div className="bf-card">
+              <div className="bf-card-head">
+                <h3>Avancado</h3>
+              </div>
+              <button
+                type="button"
+                className="bf-btn is-warn"
+                onClick={onUsbHostEnterUpdate}
+                disabled={usbHostBusy || !online}
+                title="Coloca o MCU USB Host em modo OTA (reinicia aguardando firmware novo)"
+              >MODO UPDATE (OTA)</button>
+            </div>
+          </>
+        );
+      })()}
+
       {section === 'backup' && (
         <>
           <BackupRestoreCard />
-          <EraseDataCard />
+          <EraseDataCard onErased={onErased} />
         </>
       )}
 
@@ -6555,7 +6822,9 @@ function TabBar({ page, setPage, saveState, onSave,
                   onCopyPreset, onPastePreset, presetClipboard,
                   presetClipboardStatus,
                   onCopyBank, onPasteBank, bankClipboard,
-                  bankClipboardStatus }) {
+                  bankClipboardStatus,
+                  onCopyLayer, onPasteLayer, layerClipboard,
+                  layerClipboardStatus, editorLayer }) {
   const tabs = [
     { id: 'preset_config', label: 'PRESET' },
     { id: 'global_config', label: 'GLOBAL' },
@@ -6594,12 +6863,14 @@ function TabBar({ page, setPage, saveState, onSave,
             className={'bf-tabbar-plus' +
                        (menuOpen ? ' is-open' : '') +
                        ((presetClipboardStatus === 'copied' || presetClipboardStatus === 'pasted' ||
-                         bankClipboardStatus === 'copied' || bankClipboardStatus === 'pasted')
+                         bankClipboardStatus === 'copied' || bankClipboardStatus === 'pasted' ||
+                         layerClipboardStatus === 'copied' || layerClipboardStatus === 'pasted')
                          ? ' is-flash-ok' : '') +
                        ((presetClipboardStatus === 'pasting' || bankClipboardStatus === 'pasting' ||
-                         bankClipboardStatus === 'copying')
+                         bankClipboardStatus === 'copying' || layerClipboardStatus === 'pasting')
                          ? ' is-busy' : '') +
-                       ((presetClipboardStatus === 'error' || bankClipboardStatus === 'error')
+                       ((presetClipboardStatus === 'error' || bankClipboardStatus === 'error' ||
+                         layerClipboardStatus === 'error')
                          ? ' is-flash-err' : '')}
             onClick={() => setMenuOpen((v) => !v)}
             aria-label="Acoes do preset"
@@ -6645,6 +6916,45 @@ function TabBar({ page, setPage, saveState, onSave,
                     <path d="M12 11v6 M9 14l3 3 3-3" />
                   </svg>
                   <span>PASTE PRESET <em>({presetClipboard.srcTag})</em></span>
+                </button>
+              )}
+              <div className="bf-tabbar-plus-sep" />
+              {/* COPY/PASTE LAYER — afeta SOMENTE o layer ATIVO no editor
+                  (editorLayer). Util pra duplicar funcoes do L1 no L2 ou
+                  vice-versa dentro do mesmo preset, ou copiar um layer
+                  inteiro pra outro preset. */}
+              <button
+                type="button"
+                role="menuitem"
+                className="bf-tabbar-plus-item"
+                onClick={() => { setMenuOpen(false); onCopyLayer && onCopyLayer(); }}
+                title={`Copia o LAYER ${editorLayer || 1} do preset atual (modos + params + display dos 6 SWs)`}
+              >
+                <svg viewBox="0 0 24 24" width="16" height="16"
+                     fill="none" stroke="currentColor" strokeWidth="2"
+                     strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  {/* 2 retangulos sobrepostos = camada/layer */}
+                  <rect x="5" y="9" width="11" height="11" rx="2" />
+                  <path d="M9 5h9a1 1 0 0 1 1 1v9" />
+                </svg>
+                <span>COPY LAYER <em>(L{editorLayer || 1})</em></span>
+              </button>
+              {layerClipboard && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="bf-tabbar-plus-item"
+                  onClick={() => { setMenuOpen(false); onPasteLayer && onPasteLayer(); }}
+                  title={`Cola o layer copiado (${layerClipboard.srcTag} L${layerClipboard.srcLayer}) no LAYER ${editorLayer || 1} do preset atual`}
+                >
+                  <svg viewBox="0 0 24 24" width="16" height="16"
+                       fill="none" stroke="currentColor" strokeWidth="2"
+                       strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <rect x="5" y="9" width="11" height="11" rx="2" />
+                    <path d="M9 5h9a1 1 0 0 1 1 1v9" />
+                    <path d="M10 14v4 M8 16l2 2 2-2" />
+                  </svg>
+                  <span>PASTE LAYER <em>({layerClipboard.srcTag} L{layerClipboard.srcLayer} → L{editorLayer || 1})</em></span>
                 </button>
               )}
               <div className="bf-tabbar-plus-sep" />
@@ -6815,9 +7125,12 @@ function PasteProgressModal({ progress }) {
     ? Math.min(100, Math.round((progress.step / progress.total) * 100))
     : null;
   const title = progress.kind === 'bank'
-    ? 'COLANDO BANCO' : 'COLANDO PRESET';
+    ? 'COLANDO BANCO'
+    : progress.kind === 'layer'
+      ? 'COLANDO LAYER'
+      : 'COLANDO PRESET';
   return ReactDOM.createPortal(
-    <div className="bf-modal-backdrop">
+    <div className="bf-modal-backdrop bf-modal-backdrop-strong">
       <div className="bf-modal" role="dialog" aria-label={title}
            onClick={(e) => e.stopPropagation()}>
         <div className="bf-modal-head">
@@ -7037,7 +7350,15 @@ function App() {
   const [model, setModel] = useState('BFMIDI-3 7S');
   const [brightness, setBrightness] = useState(72);
   const [bankLedColor, setBankLedColor] = useState(2);
+  // liveLedColor = cor dos pixels PIXELSLIVE (LED do switch LIVE_MODE_PIN
+  // — placas com foot+LED dedicado para o modo live). Mapeia direto
+  // ao globalLiveLedColorIndex / key `live_led_color` no firmware.
   const [liveLedColor, setLiveLedColor] = useState(2);
+  // LAYER 2: cor indicadora quando ativo + flag de ativacao. Funcionalidade
+  // do que o Layer 2 faz sera definida depois — por enquanto so persiste
+  // os valores na NVS via /config/global.
+  const [layer2LedColor, setLayer2LedColor] = useState(4);
+  const [layer2Enabled, setLayer2Enabled] = useState(false);
   const [ledColorMode, setLedColorMode] = useState('letras');
   const [letterLedColors, setLetterLedColors] = useState([2, 2, 2, 2, 2]);
   const [switchLedColors, setSwitchLedColors] = useState([2, 2, 2, 2, 2, 2]);
@@ -7085,12 +7406,23 @@ function App() {
   const [savedSwModes, setSavedSwModes] = useState({});
   const [swModesStatus, setSwModesStatus] = useState('idle'); // idle|saving|saved|error
   const swModesDirty = swModesToStr(swModes) !== swModesToStr(savedSwModes);
+  // ── LAYER 2 — stash do layer INATIVO ─────────────────────────────────
+  // editorLayer (1|2) define qual layer esta sendo editado. swModes/
+  // swParams/swDisplay sempre refletem o layer ATIVO; *L2 versoes guardam
+  // os dados do outro layer enquanto ele nao esta visivel. toggleEditorLayer
+  // faz swap atomico ativo<->stash. Save grava ambos os layers; load
+  // recebe ambos do /bank/current e bucketa por sufixo da chave.
+  const [editorLayer, setEditorLayer] = useState(1);
+  const [swModesL2, setSwModesL2] = useState({});
+  const [savedSwModesL2, setSavedSwModesL2] = useState({});
   // Display config (icone + cores + sigla) por SW. Vive no header do
   // preset (campos swdisp1..swdisp6). Mesmo padrao do swModes: dirty
   // tracking, salvo via saveLive junto com sw_modes.
   const [swDisplay, setSwDisplay] = useState(defaultSwDisplayMap);
   const [savedSwDisplay, setSavedSwDisplay] = useState(defaultSwDisplayMap);
   const swDisplayDirty = !swDisplayEqual(swDisplay, savedSwDisplay);
+  const [swDisplayL2, setSwDisplayL2] = useState(defaultSwDisplayMap);
+  const [savedSwDisplayL2, setSavedSwDisplayL2] = useState(defaultSwDisplayMap);
   const setSwDisplayOne = useCallback((sw, next) => {
     setSwDisplay((prev) => ({ ...prev, [sw]: { ...DEFAULT_SW_DISPLAY(), ...next } }));
   }, []);
@@ -7109,6 +7441,10 @@ function App() {
   // pagina — sobrevive ao toggle PRESET/LIVE, diferente do savedMetaByTag
   // do PresetEditorCard que desmonta com o card).
   const [currentSavedMeta, setCurrentSavedMeta] = useState(null);
+  // Bump a cada paste pra forcar o PresetEditorCard (que tem cache interno
+  // de meta por tag) a re-buscar /bank/preset. Sem isso o SAVE do rodape
+  // reescreve com o meta velho por cima do que o paste acabou de gravar.
+  const [presetReloadToken, setPresetReloadToken] = useState(0);
   // Clipboard de preset INTEIRO — { srcTag, meta, swModes, swParams }.
   // COPY: snapshot do preset atual; PASTE: aplica em outro preset.
   // Vive enquanto o webApp roda (perdido no refresh da pagina).
@@ -7120,6 +7456,12 @@ function App() {
   // o clipboard de preset — pode demorar varios segundos pra colar.
   const [bankClipboard, setBankClipboard] = useState(null);
   const [bankClipboardStatus, setBankClipboardStatus] = useState('idle');
+  // Clipboard de UM LAYER — { srcTag, srcLayer, swModes, swParams, swDisplay }.
+  // COPY LAYER: snapshot apenas do layer EDITADO; PASTE LAYER: aplica no
+  // layer EDITADO do preset atual (pode ser layer diferente — cross-layer
+  // copy de L1 → L2 ou vice-versa). Util pra duplicar funcoes entre layers.
+  const [layerClipboard, setLayerClipboard] = useState(null);
+  const [layerClipboardStatus, setLayerClipboardStatus] = useState('idle');
   // Progresso visual do PASTE PRESET / PASTE BANK. null = sem operacao.
   // { kind: 'preset'|'bank', step, total, label } — exibido em modal
   // bloqueante via <PasteProgressModal>. Cada API call avanca o step.
@@ -7161,6 +7503,31 @@ function App() {
   const [savedSwParams, setSavedSwParams] = useState({});
   const swParamsDirty =
     JSON.stringify(swParams) !== JSON.stringify(savedSwParams);
+  const [swParamsL2, setSwParamsL2] = useState({});
+  const [savedSwParamsL2, setSavedSwParamsL2] = useState({});
+  // Swap atomico ativo<->stash + POST /live/layer pra device espelhar.
+  // React batcha as 8 chamadas de setState num so re-render dentro do
+  // handler, entao cada uma le o valor ANTERIOR — swap em 1 passo.
+  const toggleEditorLayer = useCallback((target) => {
+    const t = Number(target) === 2 ? 2 : 1;
+    setEditorLayer((prev) => {
+      if (prev === t) return prev;
+      // Promove stash a ativo e ativo a stash.
+      setSwModes((cur) => { setSwModesL2(cur); return swModesL2; });
+      setSavedSwModes((cur) => { setSavedSwModesL2(cur); return savedSwModesL2; });
+      setSwParams((cur) => { setSwParamsL2(cur); return swParamsL2; });
+      setSavedSwParams((cur) => { setSavedSwParamsL2(cur); return savedSwParamsL2; });
+      setSwDisplay((cur) => { setSwDisplayL2(cur); return swDisplayL2; });
+      setSavedSwDisplay((cur) => { setSavedSwDisplayL2(cur); return savedSwDisplayL2; });
+      // Mirror no device — best-effort, NAO bloqueia o swap visual.
+      // Fire-and-forget; em USB/offline o catch silencia o erro.
+      try {
+        apiCall('POST', `/live/layer?value=${t}`).catch(() => {});
+      } catch {}
+      return t;
+    });
+  }, [swModesL2, savedSwModesL2, swParamsL2, savedSwParamsL2,
+      swDisplayL2, savedSwDisplayL2]);
   // dirty combinado do LIVE MODE (sw_modes do header + params dos SWs +
   // display config dos SWs).
   const liveDirty = swModesDirty || swParamsDirty || swDisplayDirty;
@@ -7176,6 +7543,10 @@ function App() {
   // (eventos do MONITOR ficam congelados se o usuario editar depois).
   useEffect(() => { savedSwModesRef.current = savedSwModes; }, [savedSwModes]);
   useEffect(() => { savedSwParamsRef.current = savedSwParams; }, [savedSwParams]);
+  // editorLayerRef — usado por closures em loadSwParams/loadBankCurrent
+  // (que rodam em setInterval e podem ter stale value do useState).
+  const editorLayerRef = useRef(1);
+  useEffect(() => { editorLayerRef.current = editorLayer; }, [editorLayer]);
 
   // Constroi o snapshot do MONITOR a partir do meta salvo + modos/params
   // dos SWs. Dedup por JSON pra so atualizar quando algo realmente muda
@@ -7235,16 +7606,133 @@ function App() {
     const tag = currentTagRef.current;
     if (!currentSavedMeta) return;
     const clone = (o) => JSON.parse(JSON.stringify(o));
+    // Sempre captura L1 + L2 — independente de qual layer o editor esta
+    // mostrando agora, swModes/* eh o ATIVO e *L2 eh o stash; normaliza
+    // pra L1=ativo quando editorLayer===1, senao ativo eh L2.
+    const isEditingL2 = editorLayer === 2;
+    const modesL1 = clone((isEditingL2 ? savedSwModesL2 : savedSwModes) || {});
+    const modesL2 = clone((isEditingL2 ? savedSwModes : savedSwModesL2) || {});
+    const paramsL1 = clone((isEditingL2 ? savedSwParamsL2 : savedSwParams) || {});
+    const paramsL2 = clone((isEditingL2 ? savedSwParams : savedSwParamsL2) || {});
+    const dispL1 = clone((isEditingL2 ? savedSwDisplayL2 : savedSwDisplay) || {});
+    const dispL2 = clone((isEditingL2 ? savedSwDisplay : savedSwDisplayL2) || {});
     setPresetClipboard({
       srcTag: tag,
       meta: clone(currentSavedMeta),
-      swModes: clone(savedSwModes || {}),
-      swParams: clone(savedSwParams || {}),
-      swDisplay: clone(savedSwDisplay || {}),
+      swModes: modesL1,
+      swParams: paramsL1,
+      swDisplay: dispL1,
+      swModesL2: modesL2,
+      swParamsL2: paramsL2,
+      swDisplayL2: dispL2,
     });
     setPresetClipboardStatus('copied');
     setTimeout(() => setPresetClipboardStatus('idle'), 1500);
-  }, [currentSavedMeta, savedSwModes, savedSwParams, savedSwDisplay]);
+  }, [currentSavedMeta, savedSwModes, savedSwParams, savedSwDisplay,
+      savedSwModesL2, savedSwParamsL2, savedSwDisplayL2, editorLayer]);
+
+  // COPY LAYER — snapshot do layer EDITADO (editorLayer) do preset atual.
+  // Pega apenas modos + params + display dos 6 SWs daquele layer; ignora
+  // meta do preset (name/PC/extras) — esse copia via COPY PRESET.
+  const copyCurrentLayer = useCallback(() => {
+    const tag = currentTagRef.current;
+    if (!tag) return;
+    const clone = (o) => JSON.parse(JSON.stringify(o));
+    // O layer EDITADO esta sempre em swModes/swParams/swDisplay (ativo);
+    // o outro fica em *L2 (stash).
+    setLayerClipboard({
+      srcTag: tag,
+      srcLayer: editorLayer,
+      swModes:   clone(savedSwModes   || {}),
+      swParams:  clone(savedSwParams  || {}),
+      swDisplay: clone(savedSwDisplay || {}),
+    });
+    setLayerClipboardStatus('copied');
+    setTimeout(() => setLayerClipboardStatus('idle'), 1500);
+  }, [editorLayer, savedSwModes, savedSwParams, savedSwDisplay]);
+
+  // PASTE LAYER — escreve o layer copiado no LAYER EDITADO do preset atual
+  // (pode ser cross-layer: ex.: copiou L1 do A1, cola em L2 do B3). Atualiza
+  // estado local imediatamente e posta no firmware:
+  //   1) Header (sw_modes ou sw_modes_l2 + swdispN[L2]) — um POST /bank/preset
+  //   2) Params — N POSTs /sw/params?layer=editorLayer
+  const pasteIntoCurrentLayer = useCallback(async () => {
+    if (!layerClipboard) return;
+    const tag = currentTagRef.current;
+    if (!tag) return;
+    setLayerClipboardStatus('pasting');
+
+    // Pre-conta steps: 1 header + 1 por sw/mode escrito (mesma logica
+    // de countPasteSteps, mas so de 1 layer).
+    const srcModes = layerClipboard.swModes || {};
+    const srcParams = layerClipboard.swParams || {};
+    let total = 1;
+    for (let sw = 1; sw <= 6; sw++) {
+      const modes = { ...(srcParams[sw] || {}) };
+      const activeMode = srcModes[sw] || 'mute';
+      if (activeMode !== 'mute' && !modes[activeMode]) modes[activeMode] = {};
+      total += Object.keys(modes).length;
+    }
+    let step = 0;
+    setPasteProgress({
+      kind: 'layer', step: 0, total,
+      label: `Colando LAYER ${editorLayer} em ${tag}…`,
+    });
+
+    try {
+      // 1) Header — escreve s o sw_modes (ou _l2) + swdispN[L2] do
+      // layer EDITADO. NAO usa metaToApiBody (esse e do preset todo).
+      const layerSuffix = editorLayer === 2 ? 'L2' : '';
+      const headerBody = new URLSearchParams();
+      headerBody.set('sw_modes' + (editorLayer === 2 ? '_l2' : ''),
+                     swModesToStr(layerClipboard.swModes || {}));
+      swDisplayToApiBody(layerClipboard.swDisplay || {}, headerBody, layerSuffix);
+      await apiCall('POST',
+        `/bank/preset?bank=${encodeURIComponent(tag)}`, headerBody);
+      step += 1;
+      setPasteProgress({
+        kind: 'layer', step, total,
+        label: `Colando em ${tag} · Header`,
+      });
+
+      // 2) Params do layer — POST /sw/params?layer=N&sw=K&mode=...
+      for (let sw = 1; sw <= 6; sw++) {
+        const modes = { ...(srcParams[sw] || {}) };
+        const activeMode = srcModes[sw] || 'mute';
+        if (activeMode !== 'mute' && !modes[activeMode]) {
+          modes[activeMode] = DEFAULT_SW_PARAMS(activeMode);
+        }
+        for (const modeId of Object.keys(modes)) {
+          await apiCall('POST',
+            `/sw/params?bank=${encodeURIComponent(tag)}&sw=${sw}` +
+            `&layer=${editorLayer}&mode=${encodeURIComponent(modeId)}`,
+            swParamsToApiBody(modes[modeId]));
+          step += 1;
+          setPasteProgress({
+            kind: 'layer', step, total,
+            label: `Colando em ${tag} · L${editorLayer} SW${sw} · ${modeId}`,
+          });
+        }
+      }
+
+      // Atualiza estado local IMEDIATAMENTE (ativo = layer editado).
+      const cloneModes   = JSON.parse(JSON.stringify(srcModes));
+      const cloneParams  = JSON.parse(JSON.stringify(srcParams));
+      const cloneDisplay = JSON.parse(JSON.stringify(layerClipboard.swDisplay || {}));
+      setSwModes(cloneModes);     setSavedSwModes(cloneModes);
+      setSwParams(cloneParams);   setSavedSwParams(cloneParams);
+      setSwDisplay(cloneDisplay); setSavedSwDisplay(cloneDisplay);
+
+      setPasteProgress(null);
+      setLayerClipboardStatus('pasted');
+      setTimeout(() => setLayerClipboardStatus('idle'), 1500);
+    } catch {
+      setPasteProgress(null);
+      setLayerClipboardStatus('error');
+      setTimeout(() => setLayerClipboardStatus('idle'), 1800);
+      loadSwParams(tag);
+    }
+  }, [layerClipboard, editorLayer]);
 
   // Helper compartilhado entre PASTE PRESET e PASTE BANK. Aplica um
   // snapshot (meta + swModes + swParams) em um preset destino.
@@ -7263,28 +7751,45 @@ function App() {
   // pra o modal de progresso avancar. countPasteSteps abaixo pre-calcula
   // o total de calls pro componente conseguir desenhar a barra.
   const pastePresetToDest = useCallback(async (destTag, src, onStep) => {
-    onStep && onStep('Header');
-    const headerBody = metaToApiBody(src.meta);
-    headerBody.set('sw_modes', swModesToStr(src.swModes));
-    if (src.swDisplay) swDisplayToApiBody(src.swDisplay, headerBody);
+    // Header em 2 POSTs (L1 + L2): mantem cada body pequeno (~700B em vez
+    // de ~1.5KB) e da intervalo entre commits do LittleFS no firmware.
+    // Body grande + rajada de POSTs subsequentes em /sw/params satura o
+    // WebServer e POSTs comecam a ser dropados silenciosamente.
+    onStep && onStep('Header L1');
+    const headerL1 = metaToApiBody(src.meta);
+    headerL1.set('sw_modes', swModesToStr(src.swModes || {}));
+    if (src.swDisplay) swDisplayToApiBody(src.swDisplay, headerL1, '');
     await apiCall('POST',
-      `/bank/preset?bank=${encodeURIComponent(destTag)}`, headerBody);
+      `/bank/preset?bank=${encodeURIComponent(destTag)}`, headerL1);
 
-    for (let sw = 1; sw <= 6; sw++) {
-      const modes = { ...((src.swParams || {})[sw] || {}) };
-      const activeMode = (src.swModes || {})[sw] || 'mute';
-      // Garante que o MODO ATIVO sempre tem params escritos no destino,
-      // mesmo que a origem nunca tenha aberto o editor pra esse modo.
-      if (activeMode !== 'mute' && !modes[activeMode]) {
-        modes[activeMode] = DEFAULT_SW_PARAMS(activeMode);
-      }
-      const modeIds = Object.keys(modes);
-      for (const modeId of modeIds) {
-        onStep && onStep(`SW${sw} · ${modeId}`);
-        await apiCall('POST',
-          `/sw/params?bank=${encodeURIComponent(destTag)}&sw=${sw}` +
-          `&mode=${encodeURIComponent(modeId)}`,
-          swParamsToApiBody(modes[modeId]));
+    onStep && onStep('Header L2');
+    const headerL2 = new URLSearchParams();
+    headerL2.set('sw_modes_l2', swModesToStr(src.swModesL2 || {}));
+    if (src.swDisplayL2) swDisplayToApiBody(src.swDisplayL2, headerL2, 'L2');
+    await apiCall('POST',
+      `/bank/preset?bank=${encodeURIComponent(destTag)}`, headerL2);
+
+    // Escreve params dos 2 layers (clipboard antigo sem *L2 = L2 vazio,
+    // efetivamente reseta pra MUTE — consistente com o sw_modes_l2=0,0...).
+    const layers = [
+      { N: 1, modes: src.swModes   || {}, params: src.swParams   || {} },
+      { N: 2, modes: src.swModesL2 || {}, params: src.swParamsL2 || {} },
+    ];
+    for (const L of layers) {
+      for (let sw = 1; sw <= 6; sw++) {
+        const modes = { ...(L.params[sw] || {}) };
+        const activeMode = L.modes[sw] || 'mute';
+        if (activeMode !== 'mute' && !modes[activeMode]) {
+          modes[activeMode] = DEFAULT_SW_PARAMS(activeMode);
+        }
+        const modeIds = Object.keys(modes);
+        for (const modeId of modeIds) {
+          onStep && onStep(`L${L.N} SW${sw} · ${modeId}`);
+          await apiCall('POST',
+            `/sw/params?bank=${encodeURIComponent(destTag)}&sw=${sw}` +
+            `&layer=${L.N}&mode=${encodeURIComponent(modeId)}`,
+            swParamsToApiBody(modes[modeId]));
+        }
       }
     }
   }, []);
@@ -7293,12 +7798,18 @@ function App() {
   // que sera escrito). Usado pra montar a barra de progresso ANTES do
   // primeiro request, pra o usuario ja ver o "X de Y" desde o inicio.
   const countPasteSteps = useCallback((src) => {
-    let n = 1; // header POST
-    for (let sw = 1; sw <= 6; sw++) {
-      const modes = { ...((src.swParams || {})[sw] || {}) };
-      const activeMode = (src.swModes || {})[sw] || 'mute';
-      if (activeMode !== 'mute' && !modes[activeMode]) modes[activeMode] = {};
-      n += Object.keys(modes).length;
+    let n = 2; // header L1 + header L2
+    const layers = [
+      { modes: src.swModes   || {}, params: src.swParams   || {} },
+      { modes: src.swModesL2 || {}, params: src.swParamsL2 || {} },
+    ];
+    for (const L of layers) {
+      for (let sw = 1; sw <= 6; sw++) {
+        const modes = { ...(L.params[sw] || {}) };
+        const activeMode = L.modes[sw] || 'mute';
+        if (activeMode !== 'mute' && !modes[activeMode]) modes[activeMode] = {};
+        n += Object.keys(modes).length;
+      }
     }
     return n;
   }, []);
@@ -7330,7 +7841,29 @@ function App() {
           label: `Colando em ${tag} · ${sublabel}`,
         });
       });
-      await loadSwParams(tag);
+      // Sincroniza state local DO APP a partir do clipboard — sem isso, o
+      // SAVE do rodape reescreve por cima do que o paste gravou no device.
+      // Respeita o editorLayer: ativo (swModes/swParams/swDisplay) carrega
+      // o layer EDITADO; stash (*L2) carrega o outro.
+      const clone = (o) => JSON.parse(JSON.stringify(o));
+      const isEditingL2 = editorLayer === 2;
+      const activeModes   = clone(isEditingL2 ? presetClipboard.swModesL2   : presetClipboard.swModes);
+      const stashModes    = clone(isEditingL2 ? presetClipboard.swModes     : presetClipboard.swModesL2);
+      const activeParams  = clone(isEditingL2 ? presetClipboard.swParamsL2  : presetClipboard.swParams);
+      const stashParams   = clone(isEditingL2 ? presetClipboard.swParams    : presetClipboard.swParamsL2);
+      const activeDisplay = clone(isEditingL2 ? presetClipboard.swDisplayL2 : presetClipboard.swDisplay);
+      const stashDisplay  = clone(isEditingL2 ? presetClipboard.swDisplay   : presetClipboard.swDisplayL2);
+      setSwModes(activeModes);     setSavedSwModes(activeModes);
+      setSwModesL2(stashModes);    setSavedSwModesL2(stashModes);
+      setSwParams(activeParams);   setSavedSwParams(activeParams);
+      setSwParamsL2(stashParams);  setSavedSwParamsL2(stashParams);
+      setSwDisplay(activeDisplay); setSavedSwDisplay(activeDisplay);
+      setSwDisplayL2(stashDisplay);setSavedSwDisplayL2(stashDisplay);
+      // currentSavedMeta vive no App, mas o PresetEditorCard tem cache
+      // proprio de meta por tag (metaByTag/savedMetaByTag interno). Atualiza
+      // os dois: o do App direto, e o do card via bump do presetReloadToken.
+      setCurrentSavedMeta(clone(presetClipboard.meta));
+      setPresetReloadToken((v) => v + 1);
       setPasteProgress(null);
       setPresetClipboardStatus('pasted');
       setTimeout(() => setPresetClipboardStatus('idle'), 1500);
@@ -7339,7 +7872,7 @@ function App() {
       setPresetClipboardStatus('error');
       setTimeout(() => setPresetClipboardStatus('idle'), 1800);
     }
-  }, [presetClipboard, pastePresetToDest, countPasteSteps]);
+  }, [presetClipboard, pastePresetToDest, countPasteSteps, editorLayer]);
 
   // COPY BANK — varre todos os 6 presets do banco atual (A..E) e
   // armazena um snapshot completo. Faz 12 GETs (6 metas + 6 sw_params).
@@ -7356,12 +7889,17 @@ function App() {
           `/bank/preset?bank=${encodeURIComponent(tag)}`);
         const rawMeta = (presetResp && presetResp.meta) || presetResp || {};
         const meta = metaFromApi(rawMeta);
-        const swModes = parseSwModesStr(rawMeta.sw_modes || '0,0,0,0,0,0');
-        const swDisplay = parseSwDisplayFromMeta(rawMeta);
+        const swModes   = parseSwModesStr(rawMeta.sw_modes   || '0,0,0,0,0,0');
+        const swModesL2 = parseSwModesStr(rawMeta.sw_modes_l2 || '0,0,0,0,0,0');
+        const swDisplay   = parseSwDisplayFromMeta(rawMeta, '');
+        const swDisplayL2 = parseSwDisplayFromMeta(rawMeta, 'L2');
         const paramsResp = await apiCall('GET',
           `/sw/params?bank=${encodeURIComponent(tag)}`);
-        const swParams = parseSwParamsObj(paramsResp && paramsResp.sw_params);
-        presets.push({ tag, meta, swModes, swParams, swDisplay });
+        const { l1: swParams, l2: swParamsL2 } =
+            parseSwParamsObjByLayer(paramsResp && paramsResp.sw_params);
+        presets.push({ tag, meta,
+          swModes, swParams, swDisplay,
+          swModesL2, swParamsL2, swDisplayL2 });
       }
       setBankClipboard({ srcLetter: letter, presets });
       setBankClipboardStatus('copied');
@@ -7408,9 +7946,34 @@ function App() {
           });
         });
       }
-      // Re-carrega o preset corrente pra refletir mudancas no UI.
+      // Re-carrega o preset corrente do clipboard (mesmo numero, letra do
+      // destino). Sincroniza state local + bump do reload token pro
+      // PresetEditorCard re-buscar o meta. Sem isso, o SAVE do rodape
+      // sobrescreve o paste.
       const curTag = currentTagRef.current;
-      if (curTag) await loadSwParams(curTag);
+      if (curTag) {
+        const curNum = parseInt(curTag.slice(1), 10) || 1;
+        const src = bankClipboard.presets.find(
+          (p) => (parseInt(p.tag.slice(1), 10) || 1) === curNum);
+        if (src) {
+          const clone = (o) => JSON.parse(JSON.stringify(o));
+          const isEditingL2 = editorLayer === 2;
+          const activeModes   = clone(isEditingL2 ? src.swModesL2   : src.swModes);
+          const stashModes    = clone(isEditingL2 ? src.swModes     : src.swModesL2);
+          const activeParams  = clone(isEditingL2 ? src.swParamsL2  : src.swParams);
+          const stashParams   = clone(isEditingL2 ? src.swParams    : src.swParamsL2);
+          const activeDisplay = clone(isEditingL2 ? src.swDisplayL2 : src.swDisplay);
+          const stashDisplay  = clone(isEditingL2 ? src.swDisplay   : src.swDisplayL2);
+          setSwModes(activeModes);     setSavedSwModes(activeModes);
+          setSwModesL2(stashModes);    setSavedSwModesL2(stashModes);
+          setSwParams(activeParams);   setSavedSwParams(activeParams);
+          setSwParamsL2(stashParams);  setSavedSwParamsL2(stashParams);
+          setSwDisplay(activeDisplay); setSavedSwDisplay(activeDisplay);
+          setSwDisplayL2(stashDisplay);setSavedSwDisplayL2(stashDisplay);
+          setCurrentSavedMeta(clone(src.meta));
+          setPresetReloadToken((v) => v + 1);
+        }
+      }
       setPasteProgress(null);
       setBankClipboardStatus('pasted');
       setTimeout(() => setBankClipboardStatus('idle'), 1500);
@@ -7419,7 +7982,7 @@ function App() {
       setBankClipboardStatus('error');
       setTimeout(() => setBankClipboardStatus('idle'), 1800);
     }
-  }, [bankClipboard, bankLetterIndex, pastePresetToDest, countPasteSteps]);
+  }, [bankClipboard, bankLetterIndex, pastePresetToDest, countPasteSteps, editorLayer]);
 
   // Edita um campo de um SW/modo. Cria a entrada com os defaults do modo
   // se ainda nao existir. Local — persistido pelo SAVE do rodape.
@@ -7441,9 +8004,15 @@ function App() {
     try {
       const resp = await apiCall(
         'GET', `/sw/params?bank=${encodeURIComponent(tag)}`);
-      const parsed = parseSwParamsObj(resp && resp.sw_params);
-      setSwParams(parsed);
-      setSavedSwParams(parsed);
+      const { l1, l2 } = parseSwParamsObjByLayer(resp && resp.sw_params);
+      // Bucketa por editorLayer atual: o layer EDITADO vai pra
+      // swParams (ativo), o outro vai pro stash swParamsL2.
+      const active = editorLayerRef.current === 2 ? l2 : l1;
+      const stash  = editorLayerRef.current === 2 ? l1 : l2;
+      setSwParams(active);
+      setSavedSwParams(active);
+      setSwParamsL2(stash);
+      setSavedSwParamsL2(stash);
     } catch {
       swParamsTagRef.current = null;  // permite retry no proximo poll
     }
@@ -7457,52 +8026,79 @@ function App() {
   const saveLive = async () => {
     setSwModesStatus('saving');
     const tag = currentTagRef.current;
+    // Determina dados L1 e L2 — o EDITADO esta em swModes/swParams/
+    // swDisplay; o outro fica no stash *L2. Posicao depende do editorLayer.
+    const isEditingL2 = editorLayer === 2;
+    const modesL1   = isEditingL2 ? swModesL2   : swModes;
+    const modesL2   = isEditingL2 ? swModes     : swModesL2;
+    const paramsL1  = isEditingL2 ? swParamsL2  : swParams;
+    const paramsL2  = isEditingL2 ? swParams    : swParamsL2;
+    const dispL1    = isEditingL2 ? swDisplayL2 : swDisplay;
+    const dispL2    = isEditingL2 ? swDisplay   : swDisplayL2;
+    const savedModesL1  = isEditingL2 ? savedSwModesL2  : savedSwModes;
+    const savedModesL2  = isEditingL2 ? savedSwModes    : savedSwModesL2;
+    const savedParamsL1 = isEditingL2 ? savedSwParamsL2 : savedSwParams;
+    const savedParamsL2 = isEditingL2 ? savedSwParams   : savedSwParamsL2;
     try {
       const headerBody = new URLSearchParams();
-      headerBody.set('sw_modes', swModesToStr(swModes));
-      // Display config (icone + cores + sigla) por SW vai junto, pra
-      // ser uma unica escrita do header.
-      swDisplayToApiBody(swDisplay, headerBody);
+      headerBody.set('sw_modes',    swModesToStr(modesL1));
+      headerBody.set('sw_modes_l2', swModesToStr(modesL2));
+      // Display config (icone + cores + sigla) por SW por layer.
+      swDisplayToApiBody(dispL1, headerBody, '');
+      swDisplayToApiBody(dispL2, headerBody, 'L2');
       await apiCall('POST',
         `/bank/preset?bank=${encodeURIComponent(tag)}`, headerBody);
-      setSavedSwModes(swModes);
-      setSavedSwDisplay(swDisplay);
+      // Atualiza baselines salvos (ativo + stash) preservando lado.
+      if (isEditingL2) {
+        setSavedSwModes(modesL2);
+        setSavedSwDisplay(dispL2);
+        setSavedSwModesL2(modesL1);
+        setSavedSwDisplayL2(dispL1);
+      } else {
+        setSavedSwModes(modesL1);
+        setSavedSwDisplay(dispL1);
+        setSavedSwModesL2(modesL2);
+        setSavedSwDisplayL2(dispL2);
+      }
 
-      // Params: posta SW/modo que mudou desde o ultimo SAVE. Tambem
-      // garante que o MODO ATIVO de cada SW tenha linha gravada — mesmo
-      // que o usuario nao tenha aberto o editor (sem isso, escolher o
-      // modo pelo picker sem tocar em nenhum campo nao gera linha
-      // sw<N>.<modo>: no arquivo do preset, e o firmware nao reconhece
-      // a configuracao na proxima chamada).
-      const updatedSwParams = { ...swParams };
-      for (let sw = 1; sw <= 6; sw++) {
-        const activeMode = swModes[sw] || 'mute';
-        // Materializa defaults se o usuario nao abriu o editor desse SW.
-        if (activeMode !== 'mute') {
-          const cur = swParams[sw] && swParams[sw][activeMode];
-          if (!cur) {
-            const defaults = DEFAULT_SW_PARAMS(activeMode);
-            updatedSwParams[sw] = {
-              ...(updatedSwParams[sw] || {}),
-              [activeMode]: defaults,
-            };
+      // Params dos 2 layers. Para cada (layer, sw, modeId) que mudou
+      // desde o ultimo SAVE, posta com &layer=N. Materializa defaults
+      // do modo ativo de cada SW (mesma logica antiga, agora por layer).
+      const updatedL1 = { ...paramsL1 };
+      const updatedL2 = { ...paramsL2 };
+      const layers = [
+        { N: 1, modes: modesL1, params: paramsL1, saved: savedParamsL1, out: updatedL1 },
+        { N: 2, modes: modesL2, params: paramsL2, saved: savedParamsL2, out: updatedL2 },
+      ];
+      for (const L of layers) {
+        for (let sw = 1; sw <= 6; sw++) {
+          const activeMode = L.modes[sw] || 'mute';
+          if (activeMode !== 'mute') {
+            const cur = L.params[sw] && L.params[sw][activeMode];
+            if (!cur) {
+              const defaults = DEFAULT_SW_PARAMS(activeMode);
+              L.out[sw] = { ...(L.out[sw] || {}), [activeMode]: defaults };
+            }
+          }
+          const modes = L.out[sw] || {};
+          for (const modeId of Object.keys(modes)) {
+            const cur = JSON.stringify(modes[modeId]);
+            const prev = JSON.stringify((L.saved[sw] || {})[modeId]);
+            if (cur === prev) continue;
+            await apiCall('POST',
+              `/sw/params?bank=${encodeURIComponent(tag)}&sw=${sw}` +
+              `&layer=${L.N}&mode=${encodeURIComponent(modeId)}`,
+              swParamsToApiBody(modes[modeId]));
           }
         }
-        const modes = updatedSwParams[sw] || {};
-        for (const modeId of Object.keys(modes)) {
-          // Para o modo ativo, sempre posta se ainda nao foi salvo.
-          // Para outros modos no swParams, segue diff normal.
-          const cur = JSON.stringify(modes[modeId]);
-          const prev = JSON.stringify((savedSwParams[sw] || {})[modeId]);
-          if (cur === prev) continue;
-          await apiCall('POST',
-            `/sw/params?bank=${encodeURIComponent(tag)}&sw=${sw}` +
-            `&mode=${encodeURIComponent(modeId)}`,
-            swParamsToApiBody(modes[modeId]));
-        }
       }
-      setSwParams(updatedSwParams);
-      setSavedSwParams(updatedSwParams);
+      if (isEditingL2) {
+        setSwParams(updatedL2); setSavedSwParams(updatedL2);
+        setSwParamsL2(updatedL1); setSavedSwParamsL2(updatedL1);
+      } else {
+        setSwParams(updatedL1); setSavedSwParams(updatedL1);
+        setSwParamsL2(updatedL2); setSavedSwParamsL2(updatedL2);
+      }
 
       setSwModesStatus('saved');
       setTimeout(() => setSwModesStatus((s) => (s === 'saved' ? 'idle' : s)), 1200);
@@ -7519,6 +8115,66 @@ function App() {
   const [wifiSsid, setWifiSsid] = useState('');
   const [wifiPassword, setWifiPassword] = useState('');
   const [wifiState, setWifiState] = useState('idle');
+
+  // USB Host bridge — GET /usb_host/status retorna online/mode/ble/filter/
+  // manufacturer/product. Poll a cada 2s enquanto a aba USB HOST estiver
+  // aberta. Acoes (mode/ble/filter/update) fazem POST e re-fetch.
+  const [usbHostStatus, setUsbHostStatus] = useState(null);
+  const [usbHostBusy, setUsbHostBusy] = useState(false);
+  const loadUsbHostStatus = useCallback(async () => {
+    try {
+      const s = await apiCall('GET', '/usb_host/status');
+      setUsbHostStatus(s);
+    } catch { /* offline / preview */ }
+  }, []);
+  const setUsbHostMode = useCallback(async (mode) => {
+    setUsbHostBusy(true);
+    try {
+      const b = new URLSearchParams(); b.set('mode', String(mode));
+      await apiCall('POST', '/usb_host/mode', b);
+      await loadUsbHostStatus();
+    } catch {}
+    setUsbHostBusy(false);
+  }, [loadUsbHostStatus]);
+  const toggleUsbHostBle = useCallback(async (enabled) => {
+    setUsbHostBusy(true);
+    try {
+      const b = new URLSearchParams(); b.set('enabled', enabled ? '1' : '0');
+      await apiCall('POST', '/usb_host/ble', b);
+      await loadUsbHostStatus();
+    } catch {}
+    setUsbHostBusy(false);
+  }, [loadUsbHostStatus]);
+  const setUsbHostFilter = useCallback(async (ch) => {
+    setUsbHostBusy(true);
+    try {
+      const b = new URLSearchParams(); b.set('channel', String(ch));
+      await apiCall('POST', '/usb_host/filter', b);
+      await loadUsbHostStatus();
+    } catch {}
+    setUsbHostBusy(false);
+  }, [loadUsbHostStatus]);
+  const usbHostEnterUpdateMode = useCallback(async () => {
+    if (!window.confirm('Colocar o MCU USB Host em modo update (OTA)?\n\n' +
+      'Ele vai reiniciar e ficar aguardando firmware novo. Use so se for ' +
+      'flashar o host.')) return;
+    setUsbHostBusy(true);
+    try {
+      await apiCall('POST', '/usb_host/update_mode');
+      await loadUsbHostStatus();
+    } catch {}
+    setUsbHostBusy(false);
+  }, [loadUsbHostStatus]);
+  const refreshUsbHostStatus = useCallback(async () => {
+    setUsbHostBusy(true);
+    try {
+      await apiCall('POST', '/usb_host/refresh');
+      // Pequeno delay pra resposta do host chegar via SysEx (Serial1 31250).
+      await new Promise((r) => setTimeout(r, 200));
+      await loadUsbHostStatus();
+    } catch {}
+    setUsbHostBusy(false);
+  }, [loadUsbHostStatus]);
 
   const activeModel = MODELS.find((m) => m.id === model);
   const presetCount = Math.min((activeModel && activeModel.switches) || 6, 6);
@@ -7539,10 +8195,16 @@ function App() {
   //   - 2 falhas seguidas antes de marcar offline (suaviza flicker de 1 ping perdido)
   //   - Mostra 'loading' (amarelo) enquanto ainda esta no limbo (1 falha so)
   const pingFailCountRef = useRef(0);
+  // Guard contra ping sobreposto. Quando offline o probe gasta ate ~6-8s
+  // (2 hosts × 3s timeout cada) e o interval pode ser 2s — sem este flag
+  // os pings empilhariam no queuedFetch.
+  const pingInFlightRef = useRef(false);
   // Auto-detecta o modo de WiFi a cada ping: probe STA primeiro (preferido),
   // depois AP como fallback. Atualiza connectionMode + deviceState pela
   // resposta. Sem probe disponivel (same-origin), so reporta offline.
   const pingHttp = useCallback(async () => {
+    if (pingInFlightRef.current) return false;
+    pingInFlightRef.current = true;
     const probeHost = async (host) => {
       // /ping (firmware novo, 16 bytes, ~10ms). Se 404, tenta /config/global
       // pra cobrir firmware antigo.
@@ -7558,33 +8220,47 @@ function App() {
       } catch { return false; }
     };
     let mode = null;
-    if (await probeHost(STA_HOST)) mode = 'STA';
-    else if (await probeHost(AP_HOST)) mode = 'AP';
-    if (mode) {
-      pingFailCountRef.current = 0;
-      setConnectionMode((cur) => (cur === mode ? cur : mode));
-      setDeviceState('online');
-      return true;
+    try {
+      if (await probeHost(STA_HOST)) mode = 'STA';
+      else if (await probeHost(AP_HOST)) mode = 'AP';
+      if (mode) {
+        pingFailCountRef.current = 0;
+        setConnectionMode((cur) => (cur === mode ? cur : mode));
+        setDeviceState('online');
+        return true;
+      }
+      pingFailCountRef.current += 1;
+      if (pingFailCountRef.current >= 2) {
+        setDeviceState('offline');
+      } else {
+        // 1a falha: ainda nao desce pra offline; mostra "loading" pra
+        // sinalizar instabilidade sem alarmar com vermelho.
+        setDeviceState('loading');
+      }
+      return false;
+    } finally {
+      pingInFlightRef.current = false;
     }
-    pingFailCountRef.current += 1;
-    if (pingFailCountRef.current >= 2) {
-      setDeviceState('offline');
-    } else {
-      // 1a falha: ainda nao desce pra offline; mostra "loading" pra
-      // sinalizar instabilidade sem alarmar com vermelho.
-      setDeviceState('loading');
-    }
-    return false;
   }, []);
 
-  // Re-ping ao trocar estado de USB e periodicamente a 10s. NAO depende
-  // mais de connectionMode (auto-detect atualiza ele aqui dentro).
+  // Re-ping ao trocar estado de USB. Periodicidade ADAPTATIVA:
+  //   - Conectado (HTTP STA/AP OK ou USB online): 10s — mantem health check
+  //     leve sem floodar o device.
+  //   - Sem conexao alguma (deviceState=offline E usbState!=connected): 2s
+  //     — retry agressivo pra recuperar rapido quando o WiFi reconectar
+  //     ou o cabo USB voltar.
+  // Reschedule dispara quando deviceState ou usbState mudam — o setInterval
+  // anterior eh limpado e um novo cria com o intervalo correto.
   useEffect(() => {
     pingFailCountRef.current = 0;  // reset ao trocar contexto
     pingHttp();
-    const id = setInterval(pingHttp, 10000);
+    const usbConnected = usbState === 'connected';
+    const httpConnected = deviceState === 'online';
+    const anyConnected = usbConnected || httpConnected;
+    const intervalMs = anyConnected ? 10000 : 2000;
+    const id = setInterval(pingHttp, intervalMs);
     return () => clearInterval(id);
-  }, [pingHttp, usbState]);
+  }, [pingHttp, usbState, deviceState]);
 
   // ── Carregar config global ──
   const loadGlobalConfig = useCallback(async (timeoutMs = 4000) => {
@@ -7626,6 +8302,8 @@ function App() {
       if (Array.isArray(config.bank_letter_enabled)) setBankLetterEnabled([0, 1, 2, 3, 4].map((i) => Number(config.bank_letter_enabled[i]) === 1));
       if (typeof config.bank_change_mode !== 'undefined') setBankChangeMode(clamp(config.bank_change_mode, 1, 2) || 1);
       if (typeof config.led_preview_live_mode !== 'undefined') setLedPreviewLive(Number(config.led_preview_live_mode) === 1);
+      if (typeof config.layer2_led_color !== 'undefined') setLayer2LedColor(clamp(config.layer2_led_color, 0, 14));
+      if (typeof config.layer2_enabled !== 'undefined') setLayer2Enabled(Number(config.layer2_enabled) === 1);
       if (typeof config.gig_view !== 'undefined') {
         const g = Number(config.gig_view);
         setGigView(g === 1 ? 'preset' : g === 2 ? 'live' : 'padrao');
@@ -7659,6 +8337,9 @@ function App() {
     if (Array.isArray(config.bank_letter_enabled)) setBankLetterEnabled([0, 1, 2, 3, 4].map((i) => Number(config.bank_letter_enabled[i]) === 1));
     if (typeof config.bank_change_mode !== 'undefined') setBankChangeMode(clamp(config.bank_change_mode, 1, 2) || 1);
     if (typeof config.led_preview_live_mode !== 'undefined') setLedPreviewLive(Number(config.led_preview_live_mode) === 1);
+    if (typeof config.live_mode_led_color !== 'undefined') setLiveModeLedColor(clamp(config.live_mode_led_color, 0, 14));
+    if (typeof config.layer2_led_color !== 'undefined') setLayer2LedColor(clamp(config.layer2_led_color, 0, 14));
+    if (typeof config.layer2_enabled !== 'undefined') setLayer2Enabled(Number(config.layer2_enabled) === 1);
     if (typeof config.gig_view !== 'undefined') {
       const g = Number(config.gig_view);
       setGigView(g === 1 ? 'preset' : g === 2 ? 'live' : 'padrao');
@@ -7670,6 +8351,36 @@ function App() {
     // deviceState (WiFi) e atualizado por pingHttp, independente do transport
     // de edicao.
   }, [loadGlobalConfig]);
+
+  // ── ERASE callback (chamado por EraseDataCard apos POST /erase/<x>) ──
+  // Sem isso, o firmware apaga mas a UI segue mostrando estado em cache.
+  // Para 'presets': re-fetch da meta + sw_params do preset ativo (limpa
+  // tambem clipboards stale e qualquer estado de edicao pendente). Para
+  // 'global': reloadGlobalConfig pega a paleta/brilho/etc resetados.
+  const handleErased = useCallback(async (target) => {
+    if (target === 'presets') {
+      // Limpa estado local imediato — defaults sao todos vazios/mute.
+      const empty = {};
+      setSwModes(empty);     setSavedSwModes(empty);
+      setSwParams(empty);    setSavedSwParams(empty);
+      setSwModesL2(empty);   setSavedSwModesL2(empty);
+      setSwParamsL2(empty);  setSavedSwParamsL2(empty);
+      setSwDisplay(defaultSwDisplayMap);  setSavedSwDisplay(defaultSwDisplayMap);
+      setSwDisplayL2(defaultSwDisplayMap); setSavedSwDisplayL2(defaultSwDisplayMap);
+      setEditorLayer(1);
+      // Clipboards podem referir a presets que nao existem mais.
+      setPresetClipboard(null);
+      setBankClipboard(null);
+      setLayerClipboard(null);
+      // Forca o tag-ref a recarregar /sw/params na proxima passada do poll.
+      swParamsTagRef.current = null;
+      // Re-fetch full state (meta + sw_params) do preset ATIVO.
+      try { await loadBankCurrent(); } catch {}
+      try { await loadSwParams(currentTagRef.current); } catch {}
+    } else if (target === 'global') {
+      try { await reloadGlobalConfig(); } catch {}
+    }
+  }, [reloadGlobalConfig]);
 
   // ── BANK ── (usa apiCall — roteia HTTP ou USB automaticamente)
   const loadBankCurrent = async () => {
@@ -7833,20 +8544,27 @@ function App() {
       if (newLastSingle !== null) {
         setLastSingleSw((cur) => (cur === newLastSingle ? cur : newLastSingle));
       }
-      // sw_modes do preset atual. Pulado se ha edicao pendente (dirty),
-      // senao o poll sobrescreveria o que o usuario ainda nao salvou.
+      // sw_modes / sw_modes_l2 do preset atual. Pulado se ha edicao
+      // pendente (dirty) — senao o poll sobrescreveria edicao nao salva.
+      // Bucketa por editorLayer atual: o EDITADO vira ativo, o outro
+      // stash. /bank/current GET retorna ambos os layers.
       if (typeof bank.meta?.sw_modes !== 'undefined' &&
           !swModesDirtyRef.current) {
-        const loaded = parseSwModesStr(bank.meta.sw_modes);
-        setSwModes(loaded);
-        setSavedSwModes(loaded);
+        const l1 = parseSwModesStr(bank.meta.sw_modes);
+        const l2 = parseSwModesStr(bank.meta.sw_modes_l2 || '0,0,0,0,0,0');
+        const active = editorLayerRef.current === 2 ? l2 : l1;
+        const stash  = editorLayerRef.current === 2 ? l1 : l2;
+        setSwModes(active); setSavedSwModes(active);
+        setSwModesL2(stash); setSavedSwModesL2(stash);
       }
-      // sw_display (icone + cores) — mesmo padrao do sw_modes. Respeita
-      // edicao pendente pra o poll nao sobrescrever.
+      // sw_display L1/L2 — mesmo padrao. Respeita edicao pendente.
       if (bank.meta && !swDisplayDirtyRef.current) {
-        const loadedDisp = parseSwDisplayFromMeta(bank.meta);
-        setSwDisplay(loadedDisp);
-        setSavedSwDisplay(loadedDisp);
+        const dispL1 = parseSwDisplayFromMeta(bank.meta, '');
+        const dispL2 = parseSwDisplayFromMeta(bank.meta, 'L2');
+        const active = editorLayerRef.current === 2 ? dispL2 : dispL1;
+        const stash  = editorLayerRef.current === 2 ? dispL1 : dispL2;
+        setSwDisplay(active); setSavedSwDisplay(active);
+        setSwDisplayL2(stash); setSavedSwDisplayL2(stash);
       }
       // Params de SW: re-busca quando o preset muda (cobre troca pelo
       // hardware), respeitando edicao pendente. /sw/params e um GET
@@ -8095,18 +8813,22 @@ function App() {
       // (era do preset anterior) e fixa o novo tag pro detector.
       setLiveEvents([]);
       liveEventsTagRef.current = currentTagRef.current;
-      // Troca de banco e acao explicita do usuario: carrega os sw_modes
-      // do novo preset como estado atual E baseline (descarta edicao nao
-      // salva do preset anterior).
-      const loadedSwModes = parseSwModesStr(bank.meta?.sw_modes);
-      setSwModes(loadedSwModes);
-      setSavedSwModes(loadedSwModes);
-      // sw_display do novo preset — mesma logica, descarta edicao nao salva.
-      const loadedSwDisplay = parseSwDisplayFromMeta(bank.meta || {});
-      setSwDisplay(loadedSwDisplay);
-      setSavedSwDisplay(loadedSwDisplay);
+      // Troca de banco eh acao explicita do usuario: descarta edicao nao
+      // salva do preset anterior e reseta o editor pro Layer 1 (mesmo
+      // que o device tambem faz em swBankApplyPreset). Bucketa L1/L2.
+      setEditorLayer(1);
+      editorLayerRef.current = 1;
+      const l1Modes = parseSwModesStr(bank.meta?.sw_modes);
+      const l2Modes = parseSwModesStr(bank.meta?.sw_modes_l2 || '0,0,0,0,0,0');
+      setSwModes(l1Modes); setSavedSwModes(l1Modes);
+      setSwModesL2(l2Modes); setSavedSwModesL2(l2Modes);
+      const dispL1 = parseSwDisplayFromMeta(bank.meta || {}, '');
+      const dispL2 = parseSwDisplayFromMeta(bank.meta || {}, 'L2');
+      setSwDisplay(dispL1); setSavedSwDisplay(dispL1);
+      setSwDisplayL2(dispL2); setSavedSwDisplayL2(dispL2);
       // Troca explicita de preset: recarrega tambem os params de SW
-      // (descarta edicao nao salva do preset anterior).
+      // (descarta edicao nao salva do preset anterior). loadSwParams
+      // bucketa por editorLayerRef = 1 (acabamos de setar).
       loadSwParams(currentTagRef.current);
       setBankState('idle');
     } catch {
@@ -8174,19 +8896,6 @@ function App() {
     }
   };
 
-  const disconnectWifiSta = async () => {
-    setWifiState('disconnecting');
-    try {
-      const s = await apiCall('POST', '/wifi/disconnect');
-      setWifiStatus(s);
-      setWifiPassword('');
-      setWifiState('idle');
-    } catch {
-      setWifiState('error');
-      setTimeout(() => setWifiState('idle'), 1400);
-    }
-  };
-
   // ── SAVE ──
   const saveGlobalConfig = async () => {
     setSaveState('saving');
@@ -8206,9 +8915,12 @@ function App() {
       bankLetterEnabled.forEach((on, i) => body.set(`bank_letter_enabled_${i}`, on ? '1' : '0'));
       body.set('bank_change_mode', String(bankChangeMode));
       body.set('led_preview_live_mode', ledPreviewLive ? '1' : '0');
+      body.set('layer2_led_color', String(layer2LedColor));
+      body.set('layer2_enabled', layer2Enabled ? '1' : '0');
       body.set('gig_view', gigView === 'preset' ? '1' : gigView === 'live' ? '2' : '0');
       body.set('live_layout',
-               liveLayout === 2 ? '2' : liveLayout === 3 ? '3' : '1');
+               liveLayout === 2 ? '2' : liveLayout === 3 ? '3' :
+               liveLayout === 4 ? '4' : '1');
       LED_COLORS.forEach((c) => body.set(`color_${c.id}`, c.rgb.join(',')));
 
       await apiCall('POST', '/config/global', body);
@@ -8282,6 +8994,7 @@ function App() {
             onToggleConnectionMode={toggleConnectionMode}
             onDisplayNameChange={setBankDisplayName}
             onRegisterPresetSave={registerPresetSave}
+            presetReloadToken={presetReloadToken}
             switchMode={switchMode}
             onSetSwitchMode={setDeviceSwitchMode}
             modeSync={modeSync}
@@ -8302,6 +9015,9 @@ function App() {
             liveEvents={liveEvents}
             monitorEntry={monitorEntry}
             ledPreviewLive={ledPreviewLive}
+            editorLayer={editorLayer}
+            onSetEditorLayer={toggleEditorLayer}
+            layer2Enabled={layer2Enabled}
           />
         )}
         {page === 'global_config' && (
@@ -8317,6 +9033,9 @@ function App() {
             letterLedColors={letterLedColors} setLetterLedColors={setLetterLedColors}
             switchLedColors={switchLedColors} setSwitchLedColors={setSwitchLedColors}
             ledPreviewLive={ledPreviewLive} setLedPreviewLive={setLedPreviewLive}
+            liveLedColor={liveLedColor} setLiveLedColor={setLiveLedColor}
+            layer2LedColor={layer2LedColor} setLayer2LedColor={setLayer2LedColor}
+            layer2Enabled={layer2Enabled} setLayer2Enabled={setLayer2Enabled}
             gigView={gigView} setGigView={setGigView}
             liveLayout={liveLayout} setLiveLayout={setLiveLayout}
             presetCount={presetCount}
@@ -8336,12 +9055,20 @@ function App() {
             wifiState={wifiState}
             onWifiScan={scanWifiNetworks}
             onWifiConnect={connectWifiSta}
-            onWifiDisconnect={disconnectWifiSta}
             deviceState={deviceState}
             usbState={usbState}
             onToggleUsb={toggleUsb}
             connectionMode={connectionMode}
             onToggleConnectionMode={toggleConnectionMode}
+            usbHostStatus={usbHostStatus}
+            usbHostBusy={usbHostBusy}
+            onUsbHostLoad={loadUsbHostStatus}
+            onUsbHostRefresh={refreshUsbHostStatus}
+            onUsbHostSetMode={setUsbHostMode}
+            onUsbHostToggleBle={toggleUsbHostBle}
+            onUsbHostSetFilter={setUsbHostFilter}
+            onUsbHostEnterUpdate={usbHostEnterUpdateMode}
+            onErased={handleErased}
           />
         )}
         <TabBar
@@ -8365,6 +9092,11 @@ function App() {
           onPasteBank={pasteIntoCurrentBank}
           bankClipboard={bankClipboard}
           bankClipboardStatus={bankClipboardStatus}
+          onCopyLayer={copyCurrentLayer}
+          onPasteLayer={pasteIntoCurrentLayer}
+          layerClipboard={layerClipboard}
+          layerClipboardStatus={layerClipboardStatus}
+          editorLayer={editorLayer}
         />
       </div>
       <PasteProgressModal progress={pasteProgress} />

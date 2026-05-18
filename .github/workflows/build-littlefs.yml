@@ -80,7 +80,7 @@ jobs:
       - name: Generate littlefs.bin
         run: |
           mkdir -p upload_littlefs
-          mklittlefs -c data -b 4096 -p 256 -s 0xF0000 upload_littlefs/littlefs.bin
+          mklittlefs -c data -b 4096 -p 256 -s 0x180000 upload_littlefs/littlefs.bin
           ls -la upload_littlefs/littlefs.bin
 
       - name: Commit littlefs.bin
