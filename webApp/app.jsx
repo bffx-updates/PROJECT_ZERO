@@ -5773,7 +5773,10 @@ function PageGlobalConfig({
           </div>
 
           {/* LIVE MODE LAYOUT — esquema visual da tela LIVE no display.
-              Por enquanto so 2 opcoes; renderizacao real virem depois. */}
+              3 opcoes:
+                1: 3x2 tiles + faixa NOME DO PRESET no meio
+                2: 3x2 tiles (sem faixa)
+                3: faixa NOME DO PRESET no topo + 1x6 tiles pequenos */}
           <div className="bf-card">
             <div className="bf-card-head">
               <h3>Live Mode Layout</h3>
@@ -5783,13 +5786,18 @@ function PageGlobalConfig({
               <button
                 className={liveLayout === 1 ? 'is-active' : ''}
                 onClick={() => setLiveLayout(1)}
-                title="Layout 1"
+                title="3x2 tiles 120x120 + faixa do preset no meio"
               >LAYOUT 1</button>
               <button
                 className={liveLayout === 2 ? 'is-active' : ''}
                 onClick={() => setLiveLayout(2)}
-                title="Layout 2"
+                title="3x2 tiles 150x150 (sem faixa)"
               >LAYOUT 2</button>
+              <button
+                className={liveLayout === 3 ? 'is-active' : ''}
+                onClick={() => setLiveLayout(3)}
+                title="Faixa do preset no topo + 1x6 tiles 70x70"
+              >LAYOUT 3</button>
             </div>
           </div>
         </>
@@ -7623,7 +7631,8 @@ function App() {
         setGigView(g === 1 ? 'preset' : g === 2 ? 'live' : 'padrao');
       }
       if (typeof config.live_layout !== 'undefined') {
-        setLiveLayout(Number(config.live_layout) === 2 ? 2 : 1);
+        const v = Number(config.live_layout);
+        setLiveLayout((v === 2 || v === 3) ? v : 1);
       }
       // deviceState e atualizado por pingHttp, nao aqui (load pode ter vindo via USB).
     }
@@ -7655,7 +7664,8 @@ function App() {
       setGigView(g === 1 ? 'preset' : g === 2 ? 'live' : 'padrao');
     }
     if (typeof config.live_layout !== 'undefined') {
-      setLiveLayout(Number(config.live_layout) === 2 ? 2 : 1);
+      const v = Number(config.live_layout);
+      setLiveLayout((v === 2 || v === 3) ? v : 1);
     }
     // deviceState (WiFi) e atualizado por pingHttp, independente do transport
     // de edicao.
@@ -7849,14 +7859,182 @@ function App() {
   };
   useEffect(() => { if (page === 'preset_config') loadBankCurrent(); }, [page, usbState]);
 
-  // Polling do bank atual enquanto a page de preset esta ativa. Cobre
-  // mudancas feitas direto no hardware (footswitches) — sem isso, o app
-  // so atualiza quando o usuario interage pela UI. 1.5s e um meio termo
-  // entre responsividade percebida e carga no ESP32.
+  // Poll leve: GET /bank/live (payload ~280B vs 3-6KB de /bank/current).
+  // Atualiza so campos volateis (estado de SW, contadores, spin_state) +
+  // detecta troca de preset feita no hardware. Se o tag mudou, dispara
+  // 1 fetch de /bank/current pra refrescar meta+data+sw_params. Reduz a
+  // banda do poll em ~95% e o tempo de snprintf no firmware.
+  const loadBankLive = async () => {
+    try {
+      const bank = await apiCall('GET', '/bank/live');
+      const li = Number(bank.bank_letter_index) || 0;
+      const pn = Number(bank.preset_number) || 1;
+      const newTag = `${String.fromCharCode(65 + li)}${pn}`;
+      setBankLetterIndex(li);
+      setPresetNumber(pn);
+      if (typeof bank.switch_mode !== 'undefined' && modeSyncRef.current) {
+        setSwitchMode(Number(bank.switch_mode) === 1 ? 'live' : 'preset');
+      }
+
+      const newLiveOn = Array.isArray(bank.sw_live_on)
+        ? Array.from({ length: 6 }, (_, i) => Number(bank.sw_live_on[i]) === 1)
+        : null;
+      const newLiveOn2 = Array.isArray(bank.sw_live_on2)
+        ? Array.from({ length: 6 }, (_, i) => Number(bank.sw_live_on2[i]) === 1)
+        : null;
+      const newLiveOn3 = Array.isArray(bank.sw_live_on3)
+        ? Array.from({ length: 6 }, (_, i) => Number(bank.sw_live_on3[i]) === 1)
+        : null;
+      const newMomentaryCount = Array.isArray(bank.sw_momentary_count)
+        ? Array.from({ length: 6 }, (_, i) => Number(bank.sw_momentary_count[i]) || 0)
+        : null;
+      const newSingleCount = Array.isArray(bank.sw_single_count)
+        ? Array.from({ length: 6 }, (_, i) => Number(bank.sw_single_count[i]) || 0)
+        : null;
+      const newLastSingle = (typeof bank.last_single_sw !== 'undefined')
+        ? Number(bank.last_single_sw)
+        : null;
+      const newTapCount = Array.isArray(bank.sw_tap_count)
+        ? Array.from({ length: 6 }, (_, i) => Number(bank.sw_tap_count[i]) || 0)
+        : null;
+      const newSpinState = Array.isArray(bank.sw_spin_state)
+        ? Array.from({ length: 6 }, (_, i) => Number(bank.sw_spin_state[i]))
+        : null;
+
+      // Detecta presses em LIVE MODE igual loadBankCurrent. Mesma lógica
+      // de eventos — duplicada aqui em vez de extraída pra manter
+      // loadBankCurrent intocado (refactor incremental).
+      if (switchModeRef.current === 'live' &&
+          liveEventsTagRef.current === newTag) {
+        const prevA = swLiveOnRef.current;
+        const prevB = swLiveOn2Ref.current;
+        const prevC = swLiveOn3Ref.current;
+        const prevM = swMomentaryCountRef.current;
+        const now = new Date();
+        const time = `${String(now.getHours()).padStart(2, '0')}:${
+            String(now.getMinutes()).padStart(2, '0')}:${
+            String(now.getSeconds()).padStart(2, '0')}`;
+        const newEvents = [];
+        for (let i = 0; i < 6; i++) {
+          if (newLiveOn && newLiveOn[i] !== prevA[i]) {
+            const ev = buildLivePressEvent(i + 1, 0, newLiveOn[i],
+              savedSwModesRef.current, savedSwParamsRef.current);
+            if (ev) newEvents.push({ ...ev, time });
+          }
+          if (newLiveOn2 && newLiveOn2[i] !== prevB[i]) {
+            const ev = buildLivePressEvent(i + 1, 1, newLiveOn2[i],
+              savedSwModesRef.current, savedSwParamsRef.current);
+            if (ev) newEvents.push({ ...ev, time });
+          }
+          if (newLiveOn3 && newLiveOn3[i] !== prevC[i]) {
+            const ev = buildLivePressEvent(i + 1, 2, newLiveOn3[i],
+              savedSwModesRef.current, savedSwParamsRef.current);
+            if (ev) newEvents.push({ ...ev, time });
+          }
+          if (newMomentaryCount && newMomentaryCount[i] !== prevM[i]) {
+            const delta = (newMomentaryCount[i] - prevM[i] + 65536) % 65536;
+            const n = Math.min(delta, 5);
+            for (let k = 0; k < n; k++) {
+              const ev = buildLivePressEvent(i + 1, 0, true,
+                savedSwModesRef.current, savedSwParamsRef.current);
+              if (ev) newEvents.push({ ...ev, time });
+            }
+          }
+          if (newSingleCount && newSingleCount[i] !== swSingleCountRef.current[i]) {
+            const prevS = swSingleCountRef.current[i];
+            const delta = (newSingleCount[i] - prevS + 65536) % 65536;
+            const n = Math.min(delta, 5);
+            for (let k = 0; k < n; k++) {
+              const ev = buildLivePressEvent(i + 1, 0, true,
+                savedSwModesRef.current, savedSwParamsRef.current);
+              if (ev) newEvents.push({ ...ev, time });
+            }
+          }
+          if (newTapCount && newTapCount[i] !== swTapCountRef.current[i]) {
+            const prevT = swTapCountRef.current[i];
+            const delta = (newTapCount[i] - prevT + 65536) % 65536;
+            const n = Math.min(delta, 8);
+            for (let k = 0; k < n; k++) {
+              const ev = buildLivePressEvent(i + 1, 0, true,
+                savedSwModesRef.current, savedSwParamsRef.current);
+              if (ev) newEvents.push({ ...ev, time });
+            }
+          }
+          if (newSpinState && newSpinState[i] !== swSpinStateRef.current[i] &&
+              newSpinState[i] >= 0) {
+            const ev = buildLivePressEvent(i + 1, 0, newSpinState[i],
+              savedSwModesRef.current, savedSwParamsRef.current);
+            if (ev) newEvents.push({ ...ev, time });
+          }
+        }
+        if (newEvents.length) setLiveEvents(newEvents);
+      }
+      if (liveEventsTagRef.current !== newTag) {
+        if (liveEventsTagRef.current) setLiveEvents([]);
+        liveEventsTagRef.current = newTag;
+      }
+      if (newLiveOn) {
+        setSwLiveOn(newLiveOn);
+        swLiveOnRef.current = newLiveOn;
+      }
+      if (newLiveOn2) {
+        setSwLiveOn2(newLiveOn2);
+        swLiveOn2Ref.current = newLiveOn2;
+      }
+      if (newLiveOn3) {
+        setSwLiveOn3(newLiveOn3);
+        swLiveOn3Ref.current = newLiveOn3;
+      }
+      if (newMomentaryCount) swMomentaryCountRef.current = newMomentaryCount;
+      if (newSingleCount) swSingleCountRef.current = newSingleCount;
+      if (newTapCount) swTapCountRef.current = newTapCount;
+      if (newSpinState) {
+        swSpinStateRef.current = newSpinState;
+        setSwSpinState((cur) => {
+          for (let i = 0; i < 6; i++) {
+            if (cur[i] !== newSpinState[i]) return newSpinState;
+          }
+          return cur;
+        });
+      }
+      if (newLastSingle !== null) {
+        setLastSingleSw((cur) => (cur === newLastSingle ? cur : newLastSingle));
+      }
+
+      // Troca de preset detectada pelo poll (footswitch fisico) — recarrega
+      // meta/data/sw_modes/sw_display/sw_params via /bank/current.
+      if (currentTagRef.current !== newTag) {
+        currentTagRef.current = newTag;
+        loadBankCurrent();
+      }
+    } catch {/* preview */}
+  };
+
+  // Polling enquanto a page de preset esta ativa. Usa /bank/live (leve);
+  // o /bank/current so eh chamado em troca de preset detectada. Pausa
+  // quando a aba esta em background (document.hidden) — economiza
+  // bateria do device e banda do WiFi.
   useEffect(() => {
     if (page !== 'preset_config') return;
-    const id = setInterval(() => { loadBankCurrent(); }, 1500);
-    return () => clearInterval(id);
+    let id = null;
+    const start = () => {
+      if (id) return;
+      loadBankLive();
+      id = setInterval(() => { loadBankLive(); }, 1500);
+    };
+    const stop = () => {
+      if (id) { clearInterval(id); id = null; }
+    };
+    const onVis = () => {
+      if (document.hidden) stop();
+      else start();
+    };
+    if (!document.hidden) start();
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      stop();
+      document.removeEventListener('visibilitychange', onVis);
+    };
   }, [page, usbState]);
 
   const selectBank = async (li, pn) => {
@@ -8029,7 +8207,8 @@ function App() {
       body.set('bank_change_mode', String(bankChangeMode));
       body.set('led_preview_live_mode', ledPreviewLive ? '1' : '0');
       body.set('gig_view', gigView === 'preset' ? '1' : gigView === 'live' ? '2' : '0');
-      body.set('live_layout', liveLayout === 2 ? '2' : '1');
+      body.set('live_layout',
+               liveLayout === 2 ? '2' : liveLayout === 3 ? '3' : '1');
       LED_COLORS.forEach((c) => body.set(`color_${c.id}`, c.rgb.join(',')));
 
       await apiCall('POST', '/config/global', body);
